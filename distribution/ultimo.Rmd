@@ -1,0 +1,1368 @@
+---
+title: "ULTIMO - Universal Transport Distribution Model"
+author: "Nina Thomsen, Lars Hedemann"
+date: "15-5-2020"
+output:
+  pdf_document: 
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    fig_caption: true
+    latex_engine: xelatex
+  html_notebook: default
+  html_document:
+    df_print: paged
+---
+```{r lib,include=FALSE}
+library(dplyr)
+library(sf)
+library(rgdal)
+library(reticulate)
+use_python("C:\\Users\\thom_nn\\.conda\\envs\\geo_basics", required = TRUE)
+library(ggplot2)
+library(RPostgreSQL)
+library(config)
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Preparation
+
+In the preparation phase, input data for all countries will be imported. Also, functions for computing the targets for the four types of transport will be defined.
+
+```{r include = FALSE}
+total_start <- Sys.time()
+```
+
+## Connect to Database 
+
+The database `model_ultimo` is used to store input data, temporary results and final results. The connection is established in the following chunk.
+
+```{r db}
+# connect to db model_ultimo
+cred = get("ultimo")
+con = dbConnect(cred$driver, user= cred$uid, password=cred$pwd, host=cred$server, port=cred$port, dbname=cred$database)
+```
+
+
+## Import Input Data
+
+The main input data with the attributes of the countries and the cells and matrices will be imported before the calculation starts.
+
+```{r input}
+input_countries <- dbGetQuery(con, " SELECT * FROM input.input_countries ", encoding="latin-1")  #TODO check encoding problems
+# only countries with sufficient data
+input_countries <- input_countries %>%
+  dplyr::filter(valid == 1)
+
+unit_pt <- 1
+unit_ft <- 1
+
+cells_eu <- dbGetQuery(con, " SELECT * FROM input.cells_eu ")
+
+tt_eu <- dbGetQuery(con, " SELECT * FROM input.tt_eu ")
+
+dis_eu <- dbGetQuery(con, " SELECT * FROM input.dis_eu ")
+
+matrix_eu <- merge(tt_eu, dis_eu, by = c("node_s","node_d"), all = TRUE)
+rm(tt_eu, dis_eu)
+
+matrix_eu$tt[is.na(matrix_eu$tt)] <- 999999.0
+matrix_eu$dis[is.na(matrix_eu$dis)] <- 999999.0
+
+matrix_eu <- merge(matrix_eu, cells_eu[,c("id", "CNTR_CODE", "pop", "index_eu")], 
+                   by.x = "node_s", by.y = "id", all.x = TRUE)
+matrix_eu <- merge(matrix_eu, cells_eu[,c("id", "CNTR_CODE", "pop", "index_eu")], 
+                   by.x = "node_d", by.y = "id", all.x = TRUE, suffixes = c(".A", ".B"))
+names(matrix_eu)[which(names(matrix_eu) %in% c("CNTR_CODE.A", "CNTR_CODE.B"))] <- c("cntr.A" , "cntr.B")
+names(matrix_eu)[which(names(matrix_eu) %in% c("index_eu.A","index_eu.B"))] <- c("index.A", "index.B")
+
+```
+\pagebreak
+## Functions for Determining the Vehicle Kilometer Targets per Transport Type
+
+### Private Transport
+
+For private transport, we need the following functions to determine the targets for national and international transport. Below is a description of the variables:
+
+* share of foreign transport in total national vehicle kilometers: pt_share_foreign1
+* share of transit in international transport: pt_share_transit
+* ratio share on national roads for international trips: pt_ratio_int
+* foreigner's mileage in the country: f_in_c
+* citizen's mileage in the country for international travels: int1
+* citizen's mileage for national trips: inner
+* national short distance mileage: short
+* national long distance mileage: long
+* international incoming / outgoing mileage: int
+* international transit mileage: trans
+
+
+```{r functions targets pt}
+pt_shares_int <- function(a,b){  # input: a = area_trans, b = border_shared
+  x1 <- (0.3/(1 + ((0.3/0.095 - 1)*exp(a*0.3*-(-1.05)))))*b
+  x2 <- max(0.02, (0.35 + -0.04*a)*b^0.5)
+  x3 <- min(0.95, max(0.1, (0.3 + 0.05*a)))
+
+  list(
+    'pt_share_foreign' = x1,
+    'pt_share_transit'  = x2,
+    "pt_ratio_int"      = x3
+  )
+}
+
+pt_targets <- function(target,area_trans,border_shared, unit){
+  shares_int <- pt_shares_int(area_trans,border_shared)
+  
+  f_in_c <- target*shares_int$pt_share_foreign
+  int1   <- target*shares_int$pt_share_foreign*shares_int$pt_ratio_int
+  inner  <- target - f_in_c - int1
+  
+  short_ <- 0.65*(inner+int1)
+  long_  <- 0.35*(inner+int1)-int1
+
+  trans_ <- shares_int$pt_share_transit*f_in_c
+  int_   <- (f_in_c - trans_)+int1
+  
+  list(
+    "short" = unit*short_,
+    "long"  = unit*long_,
+    "int"   = unit*int_,
+    "trans" = unit*trans_
+  )
+  
+}
+```
+
+\pagebreak
+### Freight Transport
+
+The following functions help define the target mileages and trips for freight transport. The input target is in tkm. 
+
+The average load is calculated with input from FK for the conposition of freight vehicles (LCV, MFT, HFT) and their respective average loads for OECD Europe in 2020. The values assumed can be seen in the table below:
+
+| Vehicle | Tkm-Share | Average Load |
+| --- | --- | --- |
+| Light Cargo Vehicle (LCV) | 8 % | 0.5 t |
+| Medium Freight Transport (MFT) | 9 % | 3 t|
+| High Freight Transport (HFT) | 83 % | 10 t|
+
+It is assumed that all long distance transport (national, international and transit) is composed of 100 % HGF, while there are all types of vehicles in short distance freight transport.
+
+```{r functions target ft}
+ft_targets <- function(target, area, border_shared, 
+                       border_crossings, neighbors, unit){
+  # cluster 
+  cats_ <- data.frame(
+  "cat" = c("cat0","cat1","cat2","cat3"),
+  "int_imex" = c(0.03,0.15,0.15,0.2),
+  "int_transit" = c(0,0.02,0.05,0.1),
+  "nat" = c(0.97,0.83,0.8,0.7)
+  )
+  if (border_shared < 0.1 & neighbors <= 1){
+  cat_country = "cat0"
+  } else if (neighbors <= 5){
+    if (border_crossings < 4 | border_shared < 0.5){
+      cat_country = "cat1"
+    }else {
+        cat_country = "cat2"
+      }
+    } else if (neighbors >= 5){
+      if (border_shared < 0.75){
+        cat_country = "cat2"
+        } else {
+          cat_country = "cat3"
+          }
+    } else {
+        cat_country = "cat2"
+    }
+  # distances
+  dis_long <- 0.365*area^(1/2) + 61.488
+  dis_short <- 1.183*area^(1/4) + 22.361
+  dis_transit <- 0.928*area^(1/2) + 38.998
+  
+  # Input tkm to t:
+  share_national <- cats_[cats_$cat == cat_country, 'nat']
+  share_international <- cats_[cats_$cat == cat_country, 'int_imex']
+  share_transit <- cats_[cats_$cat == cat_country, 'int_transit']
+  
+  t_tot <- target/((dis_long*0.2 + dis_short*0.8)*share_national + dis_long*share_international + dis_transit*share_transit)
+  t_nat <- t_tot*share_national
+  t_int <- t_tot*share_international
+  t_tra <- t_tot*share_transit
+
+  # tkm
+  tkm_long    <- t_nat * 0.2 * dis_long
+  tkm_short   <- t_nat * 0.8 * dis_short
+  tkm_imex    <- t_int * dis_long
+  tkm_transit <- t_tra * dis_transit
+  tkm <- sum(tkm_imex, tkm_short, tkm_long, tkm_transit)
+  
+  #TODO: 'dynamic' input: make composition & loads dependent on year and region
+  # av. load short distance
+  lcv <- 0.08*tkm/tkm_short
+  mft <- 0.09*tkm/tkm_short
+  hft <- (0.83*tkm-(tkm-tkm_short))/tkm_short
+  
+  # vkm
+  vkm_lcv <- (tkm_short*lcv)/0.5
+  vkm_mft <- (tkm_short*mft)/3
+  vkm_hft <- (tkm_short*hft)/10
+  vkm_short <- vkm_lcv + vkm_mft + vkm_hft
+  vkm_long <- tkm_long/10
+  vkm_imex <- tkm_imex/10
+  
+  list(
+    "lcv" = unit * vkm_lcv,
+    "mft" = unit * vkm_mft,
+    "hft" = unit * vkm_hft,
+    "trips3" = vkm_short / dis_short,
+    "long"   = unit * (vkm_long),
+    "trips1" = unit * (vkm_long/dis_long),
+    "int"    = unit * (vkm_imex),
+    "trips2" = unit * (vkm_imex/dis_long),
+    "trans"  = unit * (tkm_transit/10)
+  )
+}
+```
+\pagebreak
+# Calculations / Computations
+
+First, ULTIMO will be computed in the model section. All distributions and assignments that can be done in R will be done in this chunk. Afterwards, the OD-matrices for long distance and international transport will be transformed into Visum-readable mtx-files. The assignment is done in Visum, the results will later be merged with the short distance and transit results.
+
+## Model
+
+This is the main model of ULTIMO. In 4 steps, the transport volume will be calculated. The OD-matrices from the gravity models will be saved as csv for the conversion to mtx in the next chapter. The other results will be saved as a shp that includes all links and their short distance and transit loads.
+
+```{r ULTIMO, warning=FALSE}
+{#countries <- c("DE","ES","FR","UK","IE","BE","NL","LU","IT","CH","AT","SI","HU","PL","CZ","SK","HR","DK","SE","NO")
+countries <- c("DE")
+
+print("Starting ULTIMO...")
+print(Sys.time())
+t_start <- Sys.time()
+print("--------------------------------------------------")
+for (country in countries){
+  print(paste("Computing ULTIMO:",country, "..."))
+  t_c <- Sys.time()
+  # Input ----
+  print("Starting import...")
+  { 
+    # Cells Country
+    cells <- cells_eu %>%
+      dplyr::filter(CNTR_CODE == country)
+    
+    cells <- cells[,c("id","NUTS_ID","area","pop","index_country","len_sec")]
+    
+    # Matrix Europe
+    # 1: only country relations
+    matrix_eu_c <- matrix_eu %>%
+      dplyr::filter(cntr.A %in% country | cntr.B %in% country)
+    
+    # 2: no inner country relations
+    matrix_eu_c <- matrix_eu_c %>%
+      dplyr::filter(cntr.A != cntr.B)
+    
+    matrix_eu_c$tt <- as.numeric(matrix_eu_c$tt) #as.numeric(levels(matrix_eu_c$tt))[matrix_eu_c$tt]
+    matrix_eu_c$dis <- as.numeric(matrix_eu_c$dis) #as.numeric(levels(matrix_eu_c$dis))[matrix_eu_c$dis]
+    
+    #TODO db how? --> next step: export from Visum to database!!
+    # Matrix for distance and travel time
+    matrix_file <- paste0("_data/dis_",country,".mtx") # x
+    mtx_1 <- read.csv(matrix_file, sep = "", skip = 8, header = FALSE)
+    rm(matrix_file)
+    names(mtx_1) <- c("node_s","node_d","distance")
+    mtx_1 <- mtx_1[-which(mtx_1$distance %in% c("","object")),]
+    
+    matrix_file <- paste0("_data/tt_",country,".mtx") # x
+    mtx_2 <- read.csv(matrix_file, sep = "", skip = 8, header = FALSE)
+    rm(matrix_file)
+    names(mtx_2) <- c("node_s","node_d","tt")
+    mtx_2 <- mtx_2[-which(mtx_2$tt %in% c("","object")),]
+    
+    mtx_national <- merge(mtx_1, mtx_2, by = c("node_s","node_d"), all = TRUE)
+    mtx_national$tt[is.na(mtx_national$tt)] <- 999999
+    mtx_national$tt <- as.numeric(levels((mtx_national$tt)))[mtx_national$tt]
+    mtx_national$distance[is.na(mtx_national$distance)] <- 999999
+    mtx_national$distance <- as.numeric(levels(mtx_national$distance))[mtx_national$distance]
+    rm(mtx_1, mtx_2)
+    
+    # Road Network
+    links_db <- paste0("road_network_ultimo_",country)
+    links <- st_read(con, query = paste0('SELECT * FROM links_sp."',links_db,'"'))
+    names(links) <- c("fromnode","tonode","Id","length","type","reg","urban","nuts","geometry")
+    links <- links[,-which(names(links) == "reg")]
+    links <- merge(links, cells[,c('id','NUTS_ID')], all.x = TRUE,
+                   by.x = "nuts", by.y = "NUTS_ID")
+    names(links)[names(links) == 'id'] <- 'cellId'
+    rm(links_db)
+  }
+  print("Import complete!")
+  print("--------------------------------------------------")
+  # 0: targets ----
+  print("Compute targets...")
+  { 
+    input <- input_countries[input_countries$code == country,]
+    target_pt <- as.numeric(levels(factor(input$target_vkm)))
+    target_ft <- as.numeric(levels(factor(input$target_tkm)))
+    area_trans <- input$area_trans
+    border_shared <- as.numeric(levels(factor(input$border_shared)))
+    area <- input$area
+    border_crossings <- as.numeric(levels(factor(input$border_crossings)))
+    neighbors <- as.numeric(levels(factor(input$neighbors)))
+    
+    pt <- pt_targets(target_pt, area_trans, border_shared, unit_pt)
+    ft <- ft_targets(target_ft, area, border_shared, border_crossings,
+                     neighbors, unit_ft)
+    rm(input, target_pt, target_ft, area_trans, area, border_crossings, 
+       border_shared, neighbors, gdp)
+    # Export as RData
+    save(pt, file = paste0("_output/pt_",country,".RData"))
+    save(ft, file = paste0("_output/ft_",country,".RData"))
+  }
+  print("Targets determined!")
+  print("--------------------------------------------------")
+  
+  # cold.starts <- data.frame("starts.pt" = 0,
+  #                           "starts.ft" = 0,
+  #                           "mileage.urban.pt" = 0,
+  #                           "mileage.urban.ft" = 0)
+  cold.starts <- data.frame("cntr" = country,
+                            "starts.pt" = 0,
+                            "mileage.urban.pt" = 0)
+  
+  # 1: long distance ----
+  print("starting long distance model...")
+  {
+    # check number of cells
+    if (nrow(cells) <= 1){
+      pt$short <- pt$short + pt$long
+      ft$hft <- ft$hft + ft$long
+    } else {
+    # 1a: Private Transport ----
+    print(".............private transport...")
+    {
+      #     Trip generation ----
+      trips_per_person <- 36
+      cells$pt_goal <- cells$pop*trips_per_person
+      
+      matrix_tt <- mtx_national
+      matrix_tt <- matrix_tt[matrix_tt$tt < 999999,]
+      
+      matrix_tt <- merge(matrix_tt, cells[,c("id","pop","pt_goal")], 
+                       by.x = "node_s",by.y = "id",all.x = TRUE)
+      matrix_tt <- merge(matrix_tt, cells[,c("id","pop","pt_goal")], 
+                       by.x = "node_d",by.y = "id",all.x = TRUE, suffixes = c(".A",".B"))
+      
+      matrix_tt$pt_goal.A <- matrix_tt$pt_goal.A/2
+      matrix_tt$pt_goal.B <- matrix_tt$pt_goal.B/2
+      matrix_tt$tt <- matrix_tt$tt / 60
+      
+      #   Trip Distribution ----
+      
+      alpha <- 0.5
+      gamma <- -2.75
+      
+      matrix_tt$pop.A <- as.numeric(matrix_tt$pop.A)
+      matrix_tt$pop.B <- as.numeric(matrix_tt$pop.B)
+      
+      matrix_tt <- matrix_tt %>%
+                    dplyr::filter(!is.na(pop.A) & !is.na(pop.B))
+      
+      matrix_tt$gravitation <- (matrix_tt$pop.A*matrix_tt$pop.B)^alpha * matrix_tt$tt^gamma
+      matrix_tt$gravitation[is.na(matrix_tt$gravitation)] <- 0
+      matrix_tt$prob_A <- 0
+      matrix_tt$prob_B <- 0
+      
+      for (start in unique(matrix_tt$node_s)){
+        sum_start <- sum(matrix_tt$gravitation[matrix_tt$node_s == start], na.rm = TRUE)
+        matrix_tt$prob_A[matrix_tt$node_s == start] <- 
+          matrix_tt$gravitation[matrix_tt$node_s == start]/sum_start
+      }
+      
+      for (dest in unique(matrix_tt$node_d)){
+        sum_dest <- sum(matrix_tt$gravitation[matrix_tt$node_d == dest], na.rm = TRUE)
+        matrix_tt$prob_B[matrix_tt$node_d == dest] <- 
+          matrix_tt$gravitation[matrix_tt$node_d == dest]/sum_dest
+      }
+      
+      matrix_tt$trips.A <- matrix_tt$prob_A * matrix_tt$pt_goal.A
+      matrix_tt$trips.B <- matrix_tt$prob_B * matrix_tt$pt_goal.B
+      matrix_tt$trips   <- matrix_tt$trips.A + matrix_tt$trips.B
+      
+      #   Scaling to match target ----
+      
+      vkm_model <- sum(matrix_tt$trips*matrix_tt$distance, na.rm= TRUE)
+      scale_fac <- pt$long/vkm_model
+      print(".............scaling...")
+      print(c(pt$long, vkm_model, scale_fac))
+      
+      matrix_tt$trips <- matrix_tt$trips * scale_fac
+      
+      #     Export OD-Matrix as CSV ----
+      matrix_file <- paste0("_output/pt_long_",country,".csv")
+      write.csv(matrix_tt,matrix_file)
+      print(".............export successful!")
+      #     add starts for cold.starts
+      cold.starts$starts.pt <- cold.starts$starts.pt + sum(matrix_tt$trips)
+      rm(matrix_file, matrix_tt, alpha, gamma, start, dest, sum_start, sum_dest, 
+         vkm_model, scale_fac)
+    }
+    print(".............private transport complete!")
+    # 1b: Freight Transport ----
+    print(".............freight transport...")
+    {
+      #     Trip Generation ----
+      # cold.starts$starts.ft <- cold.starts$starts.ft + ft$trips1
+      
+      cells$ft_trips <- ((cells$index_country/sum(cells$index_country))*ft$trips1)
+      
+      matrix_dis <- mtx_national
+      matrix_dis <- matrix_dis[matrix_dis$distance < 999999,]
+      
+      matrix_dis <- merge(matrix_dis, cells[,c("id","index_country","ft_trips")], 
+                       by.x = "node_s",by.y = "id",all.x = TRUE)
+      matrix_dis <- merge(matrix_dis, cells[,c("id","index_country","ft_trips")], 
+                       by.x = "node_d",by.y = "id",all.x = TRUE, suffixes = c(".A",".B"))
+      
+      matrix_dis <- matrix_dis %>%
+                    dplyr::filter(!is.na(index_country.A) & !is.na(index_country.B))
+      
+      #     Trip Distribution ----
+      
+      beta    <- 0.00421
+      
+      matrix_dis$gravitation <- 
+        matrix_dis$index_country.A*matrix_dis$index_country.B*exp(-beta*matrix_dis$distance)
+      matrix_dis$gravitation[is.na(matrix_dis$gravitation)] <- 0
+      matrix_dis$prob_A <- 0
+      matrix_dis$prob_B <- 0
+      
+      for (start in unique(matrix_dis$node_s)){
+        sum_start <- sum(matrix_dis$gravitation[matrix_dis$node_s == start])
+        matrix_dis$prob_A[matrix_dis$node_s == start] <- 
+          matrix_dis$gravitation[matrix_dis$node_s == start]/sum_start
+      }
+      
+      for (dest in unique(matrix_dis$node_d)){
+        sum_dest <- sum(matrix_dis$gravitation[matrix_dis$node_d == dest])
+        matrix_dis$prob_B[matrix_dis$node_d == dest] <- 
+          matrix_dis$gravitation[matrix_dis$node_d == dest]/sum_dest
+      }
+      
+      matrix_dis$trips <- 
+        (matrix_dis$prob_A*matrix_dis$ft_trips.A + matrix_dis$prob_B*matrix_dis$ft_trips.B)/2
+      matrix_dis$trips[is.na(matrix_dis$trips)] <- 0
+      
+      #     Export OD-Matrix as CSV ----
+      matrix_file <- paste0("_output/ft_long_",country,".csv")
+      write.csv(matrix_dis,matrix_file)
+      print(".............export successful!")
+      rm(matrix_file, matrix_dis, beta, start, dest, sum_start, sum_dest)
+    }
+    print(".............freight transport complete!")
+  }
+  print("Long distance model finished!")
+  print("--------------------------------------------------")}
+  # 2: international ----
+  print("starting international model...")
+  {
+    # 2a: Private transport ----
+    print(".............private transport...")
+    {
+      #     Matrix Preparation ----
+      #     3: remove impossible relations
+      # matrix_eu_pt <- matrix_eu_c %>%
+      #   dplyr::filter(TT0 < 999999)
+      matrix_eu_pt <- matrix_eu_c %>%
+        dplyr::filter(tt < 999999)
+      
+      #     4: remove zero attraction cells
+      matrix_eu_pt <- matrix_eu_pt %>%
+        dplyr::filter(pop.A > 0 & pop.B > 0)
+      
+      #     Trip generation ----
+      c_starts <- as.numeric((unique(matrix_eu_pt$node_s)))
+      c_destis <- as.numeric((unique(matrix_eu_pt$node_d)))
+      cells_int_pt <- unique(c(c_starts,c_destis))
+      # cells_int_pt <- cells_int_pt[-which(is.na(cells_int_pt))]
+      rm(c_starts, c_destis)
+      cells_int_pt <- data.frame(
+        "id" = cells_int_pt
+        )
+      
+      cells_int_pt <- merge(cells_int_pt, cells_eu[,c('id','pop')], 
+                         by = "id", all.x = TRUE)
+    
+      trips_per_person <- 36
+      cells_int_pt$pt_goal <- cells_int_pt$pop*trips_per_person
+      
+      # matrix_eu_pt <- matrix_eu_pt[-which(is.na(matrix_eu_pt$TT0)),]
+      
+      matrix_eu_pt <- merge(matrix_eu_pt, cells_int_pt[,c("id","pt_goal")], 
+                       by.x = "node_s",by.y = "id",all.x = TRUE)
+      matrix_eu_pt <- merge(matrix_eu_pt, cells_int_pt[,c("id","pt_goal")],
+                       by.x = "node_d",by.y = "id",all.x = TRUE, suffixes = c(".A",".B"))
+      
+      matrix_eu_pt$pt_goal.A <- matrix_eu_pt$pt_goal.A/2
+      matrix_eu_pt$pt_goal.B <- matrix_eu_pt$pt_goal.B/2
+      matrix_eu_pt$tt <- matrix_eu_pt$tt / 60
+      
+      #   Trip Distribution ----
+      
+      alpha <- 0.5
+      gamma <- -2.75
+      
+      matrix_eu_pt$pop.A <- as.numeric(matrix_eu_pt$pop.A)
+      matrix_eu_pt$pop.B <- as.numeric(matrix_eu_pt$pop.B)
+      
+      matrix_eu_pt$gravitation <- 
+        (matrix_eu_pt$pop.A*matrix_eu_pt$pop.B)^alpha * matrix_eu_pt$tt^gamma
+      matrix_eu_pt$prob_A <- 0
+      matrix_eu_pt$prob_B <- 0
+      
+      for (start in unique(matrix_eu_pt$node_s)){
+        sum_start <- sum(matrix_eu_pt$gravitation[matrix_eu_pt$node_s == start])
+        matrix_eu_pt$prob_A[matrix_eu_pt$node_s == start] <- 
+          matrix_eu_pt$gravitation[matrix_eu_pt$node_s == start]/sum_start
+      }
+      
+      for (dest in unique(matrix_eu_pt$node_d)){
+        sum_dest <- sum(matrix_eu_pt$gravitation[matrix_eu_pt$node_d == dest])
+        matrix_eu_pt$prob_B[matrix_eu_pt$node_d == dest] <- 
+          matrix_eu_pt$gravitation[matrix_eu_pt$node_d == dest]/sum_dest
+      }
+      
+      matrix_eu_pt$trips.A <- matrix_eu_pt$prob_A * matrix_eu_pt$pt_goal.A
+      matrix_eu_pt$trips.B <- matrix_eu_pt$prob_B * matrix_eu_pt$pt_goal.B
+      matrix_eu_pt$trips   <- matrix_eu_pt$trips.A +matrix_eu_pt$trips.B
+      
+      #     Export OD-Matrix as CSV ----
+      matrix_file <- paste0("_output/pt_int_",country,".csv")
+      write.csv(matrix_eu_pt,matrix_file)
+      print(".............export successful!")
+      
+      matrix.eu.cntr <- matrix_eu_pt[matrix_eu_pt$cntr.A == country,]
+      cold.starts$starts.pt <- cold.starts$starts.pt + sum(matrix.eu.cntr$trips)
+      
+      rm(matrix_file, matrix_eu_pt, alpha, gamma, start, dest, sum_start, 
+         sum_dest, cells_int_pt, matrix.eu.cntr)
+    }
+    print(".............private transport complete!")
+    # 2b: freight transport ----
+    print(".............freight transport...")
+    {
+      #     Matrix Preparation ---- (consider doing this before also for pt)
+      
+      #     3: remove impossible relations
+      # matrix_imex <- matrix_eu_c %>%
+      #   dplyr::filter(distance < 999999)
+      matrix_imex <- matrix_eu_c %>%
+        dplyr::filter(dis < 999999)
+      
+      #     4: remove zero attraction cells
+      matrix_imex <- matrix_imex %>%
+        dplyr::filter(index.A > 0 & index.B > 0)
+      
+      #     Trip Generation ----
+      # cold.starts$starts.ft <- cold.starts$starts.ft + ft$trips2/2
+      
+      c_starts <- as.numeric((unique(matrix_imex$node_s[matrix_imex$cntr.A %in% country])))
+      # c_starts <- c_starts[-which(is.na(c_starts))]
+      c_destis <- as.numeric((unique(matrix_imex$node_d[matrix_imex$cntr.B %in% country])))
+      # c_destis <- c_destis[-which(is.na(c_destis))]
+      c_cells_int <- unique(c(c_starts,c_destis))
+      
+      df_c <- data.frame(
+        "id" = c_cells_int
+        )
+      df_c <- merge(df_c, cells_eu[,c('id','index_eu')], 
+                         by = "id", all.x = TRUE)
+      df_c$goal <- (df_c$index_eu/sum(df_c$index_eu, na.rm = TRUE))*ft$trips2/2
+      
+      matrix_imex <- merge(matrix_imex, df_c[,c("id","goal")], by.x = "node_s", 
+                           by.y = "id" ,all.x = TRUE)
+      matrix_imex <- merge(matrix_imex, df_c[,c("id","goal")], by.x = "node_d", 
+                           by.y = "id" ,all.x = TRUE, suffixes = c(".A",".B"))
+      matrix_imex$goal.A[is.na(matrix_imex$goal.A)] <- 0
+      matrix_imex$goal.B[is.na(matrix_imex$goal.B)] <- 0
+      
+      #     Trip Distribution ----
+      matrix_imex$gravitation <- 
+        matrix_imex$index.A*matrix_imex$index.B*exp(-0.00421*matrix_imex$dis)
+      #     Outgoing Trips
+      for (s in c_starts){
+        mat_s <- matrix_imex %>%
+          dplyr::filter(node_s == s)
+        sum_start <- sum(mat_s$gravitation)
+        matrix_imex$prob.A[matrix_imex$node_s==s] <- 
+          matrix_imex$gravitation[matrix_imex$node_s==s]/sum_start
+      }
+      rm(mat_s)
+      matrix_imex$prob.A[is.na(matrix_imex$prob.A)] <- 0
+      
+      matrix_imex$trips.A <- matrix_imex$prob.A * matrix_imex$goal.A
+      
+      #     Incoming Trips
+      for (d in c_destis){
+        mat_d <- matrix_imex %>%
+          dplyr::filter(node_d == d)
+        sum_desti <- sum(mat_d$gravitation)
+        matrix_imex$prob.B[matrix_imex$node_d==d] <- 
+          matrix_imex$gravitation[matrix_imex$node_d==d]/sum_desti
+      }
+      rm(mat_d)
+      matrix_imex$prob.B[is.na(matrix_imex$prob.B)] <- 0
+      
+      matrix_imex$trips.B <- matrix_imex$prob.B * matrix_imex$goal.B
+      
+      #     All Trips
+      matrix_imex$trips <- matrix_imex$trips.A + matrix_imex$trips.B
+      
+      #     Export OD-Matrix as CSV ----
+      matrix_file <- paste0("_output/ft_int_",country,".csv")
+      write.csv(matrix_imex,matrix_file)
+      print(".............export successful!")
+      rm(matrix_file, matrix_imex, c_starts, c_destis, df_c, c_cells_int)
+    }
+    print(".............freight transport complete!")
+  }
+  print("International model finished!")
+  print("--------------------------------------------------")
+  # 3: short distance ----
+  print("starting short distance assignment...")
+  {
+    # Weights per Link Types for Short Distance ----
+      {
+    ##      (depending on observed mileage distribution per link category)
+    ##      ! Lower ranked roads will be ignored,
+    ##      so it should be represented in the non highway categories.
+    
+        # weight adjusted! TODO: no ramps, set weight to 0
+    weight3<-3.5 # trunk
+    weight31<-0 # trunk ramp
+    weight2<-3.5 # primary
+    weight21<-0 # primary ramp
+    weight1<-1.5 # BAB (highway)
+    weight11<-0 # BAB (highway) ramp
+    weighttable<-as.data.frame(array(0,dim=c(6,2)))
+    names(weighttable)<-c("type","weight_pt")
+    weighttable$type<-c(1,11,2,21,3,31)
+    weighttable$weight_pt<-c(weight1,weight11,weight2,weight21,weight3,weight31)
+    
+    weight9 <- 0.75 # Secondary
+    
+    links <-merge(links,weighttable,by="type",all.x=TRUE)
+    links$weight_pt[is.na(links$weight_pt)] <- 0
+    
+    # links$weightedLength<-links$weight*links$length
+    # weights adjusted!
+    links$weightedLength_pt <- links$weight_pt * links$length *
+                            ifelse(links$urban==1,0.5,ifelse(links$urban==0,1,0))
+    
+    rm(weight1, weight11, weight31, weight2, weight21, weight3, weighttable)
+    
+        # weights adjusted, differ from pt!
+    weight3<-1.5 # trunk
+    weight31<-0 # trunk ramp
+    weight2<-0.5 # primary
+    weight21<-0 # primary ramp
+    weight1<- 5 # BAB (highway)
+    weight11<-0 # BAB (highway) ramp
+    weighttable<-as.data.frame(array(0,dim=c(6,2)))
+    names(weighttable)<-c("type","weight_ft")
+    weighttable$type<-c(1,11,2,21,3,31)
+    weighttable$weight_ft<-c(weight1,weight11,weight2,weight21,weight3,weight31)
+    
+    links <-merge(links,weighttable,by="type",all.x=TRUE)
+    links$weight_ft[is.na(links$weight_ft)] <- 0
+    
+    # weights adjusted!
+    links$weightedLength_ft <- links$weight_ft * links$length
+    
+    rm(weight1, weight11, weight31, weight2, weight21, weight3, weighttable)
+      }
+    # 3a: Private transport ----
+    print(".............private transport...")
+    {
+      cold.starts$starts.pt <- cold.starts$starts.pt + pt$short/30
+      
+      cells2 <- cells[,c("NUTS_ID","pop")]
+      names(cells2) <- c("nuts","pop")
+      
+      # secondary network length per cell, weightd
+      sec <- cells[,c("NUTS_ID","len_sec")]
+      names(sec) <- c("nuts","length")
+      sec$type <- 9
+      sec$weightedLength_pt <- 0.75*sec$length   #all urban, adjust factor if necessary
+      
+      # primary and higher
+      vkm_per_person <-pt$short/sum(cells2$pop)
+      
+      len_per_cat_nuts <- aggregate(length ~ type + nuts, data = links, sum)
+      len_per_cat_nuts <- rbind(len_per_cat_nuts, sec[,c("nuts", "type", "length")])
+      
+      wlen_per_cat_nuts <- aggregate(weightedLength_pt ~ type + nuts, 
+                                     data = links, sum)
+      wlen_per_cat_nuts <- rbind(wlen_per_cat_nuts, sec[,c("nuts", "type", "weightedLength_pt")])
+      
+      wlen_per_nuts <- aggregate(weightedLength_pt ~ nuts, 
+                                 data = wlen_per_cat_nuts, sum)
+      names(wlen_per_nuts) <-c("nuts","sumWeightedLength")
+      
+      len_per_cat_nuts <- merge(len_per_cat_nuts, wlen_per_cat_nuts, 
+                                by = c("nuts","type"), all.x = TRUE)
+      rm(wlen_per_cat_nuts)
+      
+      cells2 <- merge(cells2, wlen_per_nuts, by = "nuts", all.x = TRUE)
+      rm(wlen_per_nuts)
+      
+      cells2$pt_cell <- cells2$pop*vkm_per_person
+      cells2$pt_norm <- cells2$pt_cell / cells2$sumWeightedLength
+      
+      len_per_cat_nuts <- merge(len_per_cat_nuts, 
+                                cells2[,c("nuts","pt_cell","pt_norm")], 
+                                by = "nuts", all.x = TRUE)
+      len_per_cat_nuts$pt_vkm <- len_per_cat_nuts$pt_norm*len_per_cat_nuts$weightedLength_pt
+      len_per_cat_nuts$pt_short <- len_per_cat_nuts$pt_vkm/len_per_cat_nuts$length
+      
+      links <- merge(links, len_per_cat_nuts[,c("nuts","type","pt_short")], 
+                     by = c("nuts","type"), all.x = TRUE)
+      sec <- merge(sec, len_per_cat_nuts[,c("nuts","type","pt_vkm","pt_short")], by = c("nuts","type"),
+                   all.x = TRUE)
+      
+      file_sec <- paste0("sec_pt_",country)
+      dbWriteTable(con, c("tmp", file_sec), value = sec, overwrite=T, row.names = FALSE)
+      
+      rm(len_per_cat_nuts, cells2, vkm_per_person, sec, file_sec)
+      }
+    print(".............private transport complete!")
+    # 3b: freight transport ----
+    print(".............freight transport...")
+    { #TODO: how to include secondary network? use urban factors?
+      # cold.starts$starts.ft <- cold.starts$starts.ft + ft$trips3
+      
+      cells2 <- cells[,c("id","index_country","area")]
+      cells2$ft_lcv <- ((cells2$index_country/sum(cells2$index_country))*ft$lcv)
+      cells2$ft_mft <- ((cells2$index_country/sum(cells2$index_country))*ft$mft)
+      cells2$ft_hft <- ((cells2$index_country/sum(cells2$index_country))*ft$hft)
+      names(cells2)[names(cells2) == "id"] <- "cellId"
+      cells2 <- cells2[cells2$index_country > 0,]
+      
+      links$ft_lcv <- 0
+      links$ft_mft <- 0
+      links$ft_hft <- 0
+      distance <- 55
+      distance2 <- 0
+      ##  optional: add factor for origin cell to assign a higher share to the 'yolk'
+      facCell <- 1
+      for (cell in cells2$cellId){
+        links$weightedLength2 <- links$weightedLength_ft
+        links$weight2 <- links$weight_ft
+        links$weightedLength2[links$cellId == cell] <- 
+          links$weightedLength2[links$cellId == cell] * facCell
+        links$weight2[links$cellId == cell] <- 
+          links$weight2[links$cellId == cell] * facCell
+        
+        list_sur <- mtx_national$node_d[mtx_national$node_s == cell 
+                                        & mtx_national$distance <= distance]
+        
+        ## only for small cells < 500 km2
+        if (length(list_sur) == 0 & cells$area[cells$id == cell] < 500){
+          distance2 <- min(mtx_national$distance[mtx_national$node_s == cell]) +1
+          list_sur <- mtx_national$node_d[mtx_national$node_s == cell 
+                                          & mtx_national$distance <= distance2]
+        }
+        
+        list_sur[length(list_sur)+1] <- cell
+        cell_factLen <- sum(links$weightedLength2[links$cellId %in% list_sur])
+        # lcv
+        cell_vkm_lcv <- cells2$ft_lcv[cells2$cellId == cell]
+        cell_veh_lcv <- cell_vkm_lcv/cell_factLen
+        links$ft_lcv[links$cellId %in% list_sur] <- links$ft_lcv[links$cellId %in% list_sur] +
+                                                  links$weight2[links$cellId %in% list_sur]*cell_veh_lcv
+        # mft
+        cell_vkm_mft <- cells2$ft_mft[cells2$cellId == cell]
+        cell_veh_mft <- cell_vkm_mft/cell_factLen
+        links$ft_mft[links$cellId %in% list_sur] <- links$ft_mft[links$cellId %in% list_sur] +
+                                                  links$weight2[links$cellId %in% list_sur]*cell_veh_mft
+        # hft
+        cell_vkm_hft <- cells2$ft_hft[cells2$cellId == cell]
+        cell_veh_hft <- cell_vkm_hft/cell_factLen
+        links$ft_hft[links$cellId %in% list_sur] <- links$ft_hft[links$cellId %in% list_sur] +
+                                                  links$weight2[links$cellId %in% list_sur]*cell_veh_hft
+      }
+      rm(facCell, distance, cells2, cell, list_sur, distance2, cell_factLen)
+      rm(cell_vkm_lcv, cell_veh_lcv, cell_vkm_mft, cell_veh_mft, cell_vkm_hft, cell_veh_hft)
+      
+      links$ft_lcv[is.na(links$ft_lcv)]<-0
+      links$ft_mft[is.na(links$ft_mft)]<-0
+      links$ft_hft[is.na(links$ft_hft)]<-0
+      links <- links[,-which(names(links) %in% 
+                               c("weightedLength2","weight2","weight","weightedLength_ft","weightedLength_pt"))]
+    }
+    print(".............freight transport complete!")
+  }
+  print("Short distance assignment finished!")
+  print("--------------------------------------------------")
+  # 4: transit ----
+  print("starting transit assignment...")
+  {
+  #    import transit routes, merge attribute transit_route to links
+    print(".............filter transit routes...")
+    {
+      t_file <- paste0("_data/transit_",country,".att")
+      t_routes <- read.csv(t_file, skip = 12)
+      rm(t_file)
+      names(t_routes) <- c("visum_id","fromnode","tonode","type","length","t_weight","transit_route")
+    }
+  #    Assignment Private and Freight Transport ----
+    print(".............assign transit...")
+    {
+      links_transit <- t_routes %>%
+        dplyr::filter(transit_route == 1)
+      # TODO: Include weights based on assignment results
+      total_len_trans <- sum(links_transit$length)
+      
+      links_transit$pt_trans <- pt$trans / total_len_trans
+      links_transit$ft_trans <- ft$trans / total_len_trans
+      
+      links$visum_id <- ifelse(links$Id %% 2 == 1, links$Id-1, links$Id)
+      
+      links <- merge(links, links_transit[,c("visum_id","fromnode","tonode","pt_trans","ft_trans")],
+                     by = c("visum_id","fromnode","tonode"), all.x = TRUE)
+      links$pt_trans[is.na(links$pt_trans)] <- 0
+      links$ft_trans[is.na(links$ft_trans)] <- 0
+      rm(links_transit, total_len_trans, t_routes)
+    }
+    print("Transit assignment finished!")
+    print("--------------------------------------------------")
+  }
+  # 5: Export Result from 3 & 4
+  print("Export results short distance & transit as SHP...")
+  links <- transform(links, Id = as.integer(Id))
+  links <- transform(links, fromnode = as.integer(fromnode))
+  links <- transform(links, tonode = as.integer(tonode))
+  links$pt_short <- round(links$pt_short)
+  links$ft_lcv <- round(links$ft_lcv)
+  links$ft_mft <- round(links$ft_mft)
+  links$ft_hft <- round(links$ft_hft)
+  links$pt_trans <- round(links$pt_trans)
+  links$ft_trans <- round(links$ft_trans)
+  
+  exportlinks_path <- paste0("s_t_",country)
+  st_write(links, con, c('tmp', exportlinks_path))
+  
+  cold.file <- paste0("coldstarts_",country)
+  dbWriteTable(con, c("tmp",cold.file), value = cold.starts, overwrite=T, row.names = FALSE)
+  
+  print("Export done!")
+  rm(exportlinks_path, links, cold.file, cold.starts)
+  print(".")
+  print(".")
+  print(".")
+  print(paste("Model Calculations", country,"complete!"))
+  print(Sys.time())
+  runtime <- Sys.time()-t_c
+  print(runtime)
+}
+runtime <- Sys.time() - t_start
+print(" ")
+print("--------------------------------------------------")
+print(" ")
+print("Model Calculations finished!")
+print(Sys.time())
+print(runtime)
+}
+rm(cells, pt, ft, mtx_national, matrix_eu_c)
+rm(countries, country, s, d, runtime, sum_desti, sum_start, t_c, t_start, trips_per_person)
+```
+\pagebreak
+## Export OD-Matrices for Visum
+
+The OD-matrices were saved as CSV, but have to be converted for Visum to be able to read them. This will be done with the following python script. The decision to use python for this was made because string operations are simplein python and there was already a fitting script available in the group. This works with python 3, for python 2.7 adjustments of the print statements are necessary.
+
+```{python}
+from datetime import datetime
+import pandas as pd
+from time import time
+import numpy as np
+
+time1 = time()
+countries = ["DE","ES","FR","UK","IE","BE","NL","IT","CH","AT","SI","HU","PL","CZ","SK","HR","DK","SE","NO"]
+types = ["pt_long", "ft_long", "pt_int", "ft_int"]
+
+# VARIABLES #
+path_ = "_output/"  # path to file (empty string if same directory)
+
+col_o = 'node_s'  # name of the column that contains the ID of the origin cell
+col_d = 'node_d'  # name of the column that contains the ID of the destination cell
+trips = 'trips'  # name of the column that contains the demand
+
+now = datetime.now()
+for country in countries:
+  print('write mtx for',country)
+  for type_ in types:
+    time_t = time()
+    print('----',type_)
+    name = "{}{}_{}".format(path_,type_,country) # name of file
+    # PROGRAM #
+    matrix = pd.read_csv("{}.csv".format(name))
+    str_header = '$O;D3 \n* Von Bis \n0000 0000 \n* Faktor \n1.00 \n*   \n'
+    str_header += '* DLR Deutsches Zentrum fuer Luft und Raumfahrt e.V. Berlin \n'
+    str_header += '* {}\n'.format(now.strftime("%d.%m.%y"))
+    with open("{}.mtx".format(name), "w") as out:
+        print(str_header, file=out)
+        for row in matrix.iterrows():
+            str_ = '{} {} {}'.format(int(row[1][col_o]), int(row[1][col_d]), row[1][trips])
+            print(str_, file=out)
+    run_t = time()-time_t
+    print('...runtime',country,type_,np.floor(run_t/60), 'min', round(run_t%60),'s')
+    
+runtime = time()-time1
+print('total runtime:',np.floor(runtime/60), 'min', round(runtime%60), 's')
+
+```
+
+After the export, the assignment for long distance and international trips will be done in Visum.
+
+```{r echo = FALSE}
+total_runtime1 <- Sys.time()-total_start
+print("Runtime model calculations:")
+print(total_runtime1)
+print("Next up: Assignment in Visum")
+```
+\pagebreak
+# Assignment Results
+
+The result from the assignment in Visum will now be imported and scaled, if this is necessary to meet the target. After that, they will be merged to the resulting SHP from the ULTIMO calculation (with short distance and transit) and exported as the final result.
+
+```{r read assignment results and scale, warning=FALSE}
+types <- c("long","int")
+start_time <- Sys.time()
+countries <- c("DE")#,"ES","FR","UK","IE","BE","NL","IT","CH","AT","SI","HU","PL","CZ","SK","HR","DK","SE","NO")
+
+{
+for (country in countries){
+  print(country)
+  link_file <- paste0("s_t_",country)
+  links <- st_read(con, query = paste0('SELECT * FROM tmp."',link_file,'"'))
+  
+  t_file1 <- paste0("_output/pt_",country,".RData")
+  t_file2 <- paste0("_output/ft_",country,".RData")
+  load(t_file1)
+  load(t_file2)
+  rm(t_file1, t_file2, link_file)
+  print("--------------------------------------------------")
+  for (type_ in types){
+    print(type_)
+    
+    file_ <- paste0("_output/",type_,"_",country,".att")
+    result <- read.csv(file_, skip=12)
+    col1 <- paste0("pt_",type_)
+    col2 <- paste0("ft_",type_)
+    names(result) <- c("visum_id","fromnode","tonode","length","nuts",col1, col2)
+    
+    # filter: only German roads
+    if(type_ == "int"){
+      result <- result %>%
+        dplyr::filter(grepl(country, nuts))
+    }
+    
+    #check pt
+    print("check private transport")
+    vkm_pt <- sum(result$length * result[[col1]])
+    fac <- vkm_pt/pt[[type_]]
+    print(c(pt[[type_]],vkm_pt,fac))
+    if (fac < 0.9 | fac > 1.1){
+      print("Scaling necessary...")
+      result[[col1]] <- result[[col1]]/fac
+    } else {
+        print("No scaling necessary!")
+      }
+    rm(vkm_pt,fac)
+    
+    #check ft
+    print("check freight transport")
+    vkm_ft <- sum(result$length * result[[col2]])
+    fac <- vkm_ft/ft[[type_]]
+    print(c(ft[[type_]],vkm_ft,fac))
+    if (fac < 0.9 | fac > 1.1){
+      print("Scaling necessary...")
+      result[[col2]] <- result[[col2]]/fac
+    } else {
+        print("No scaling necessary!")
+      }
+    rm(vkm_ft,fac)
+    
+    result <- result[,c("visum_id","fromnode","tonode",col1,col2)]
+      
+    links <- merge(links,result, by = c("visum_id","fromnode","tonode"), all.x = TRUE)
+    rm(result, col1, col2, file_)
+    print("--------------------------------------------------")
+    
+    print('distribute link mileage....')
+    pt_type <- paste0('pt_',type_)
+    ft_type <- paste0('ft_',type_)
+    
+    links[[pt_type]][is.na(links[[pt_type]])] <- 0
+    links[[ft_type]][is.na(links[[ft_type]])] <- 0
+    
+    links$vkm_p <- (links[[pt_type]])*links$length
+    links$vkm_f <- (links[[ft_type]])*links$length
+    
+    # aggregate mileage per type
+    vkmPPerType <- aggregate(vkm_p ~ type + nuts , data = links, sum)
+    vkmFPerType <- aggregate(vkm_f ~ type + nuts , data = links, sum)
+    
+    # get factors
+    vkmPPerType1<-merge(vkmPPerType[vkmPPerType$type==1,c("nuts","vkm_p")],
+                        vkmPPerType[vkmPPerType$type==11,c("nuts","vkm_p")],
+                        by=c("nuts"),all.x=TRUE,suffixes = c("_1","_11"))
+    vkmPPerType1$factor_1p<-(vkmPPerType1$vkm_p_1+vkmPPerType1$vkm_p_11)/vkmPPerType1$vkm_p_1
+    vkmPPerType1$factor_11p<-0
+    vkmPPerType2<-merge(vkmPPerType[vkmPPerType$type==2,c("nuts","vkm_p")],
+                        vkmPPerType[vkmPPerType$type==21,c("nuts","vkm_p")],
+                        by=c("nuts"),all.x=TRUE,suffixes = c("_2","_21"))
+    vkmPPerType2$factor_2p<-(vkmPPerType2$vkm_p_2+vkmPPerType2$vkm_p_21)/vkmPPerType2$vkm_p_2
+    vkmPPerType2$factor_21p<-0
+    vkmPPerType3<-merge(vkmPPerType[vkmPPerType$type==3,c("nuts","vkm_p")],
+                        vkmPPerType[vkmPPerType$type==31,c("nuts","vkm_p")],
+                        by=c("nuts"),all.x=TRUE,suffixes = c("_3","_31"))
+    vkmPPerType3$factor_3p<-(vkmPPerType3$vkm_p_3+vkmPPerType3$vkm_p_31)/vkmPPerType3$vkm_p_3
+    vkmPPerType3$factor_31p<-0
+    
+    vkmFPerType1<-merge(vkmFPerType[vkmFPerType$type==1,c("nuts","vkm_f")],
+                        vkmFPerType[vkmFPerType$type==11,c("nuts","vkm_f")],
+                        by=c("nuts"),all.x=TRUE,suffixes = c("_1","_11"))
+    vkmFPerType1$factor_1f<-(vkmFPerType1$vkm_f_1+vkmFPerType1$vkm_f_11)/vkmFPerType1$vkm_f_1
+    vkmFPerType1$factor_11f<-0
+    vkmFPerType2<-merge(vkmFPerType[vkmFPerType$type==2,c("nuts","vkm_f")],
+                        vkmFPerType[vkmFPerType$type==21,c("nuts","vkm_f")],
+                        by=c("nuts"),all.x=TRUE,suffixes = c("_2","_21"))
+    vkmFPerType2$factor_2f<-(vkmFPerType2$vkm_f_2+vkmFPerType2$vkm_f_21)/vkmFPerType2$vkm_f_2
+    vkmFPerType2$factor_21f<-0
+    vkmFPerType3<-merge(vkmFPerType[vkmFPerType$type==3,c("nuts","vkm_f")],
+                        vkmFPerType[vkmFPerType$type==31,c("nuts","vkm_f")],
+                        by=c("nuts"),all.x=TRUE,suffixes = c("_3","_31"))
+    vkmFPerType3$factor_3f<-(vkmFPerType3$vkm_f_3+vkmFPerType3$vkm_f_31)/vkmFPerType3$vkm_f_3
+    vkmFPerType3$factor_31f<-0
+    
+    vkmPFactor <- merge(vkmPPerType1[,c("nuts","factor_1p","factor_11p")],
+                        vkmPPerType2[,c("nuts","factor_2p","factor_21p")],by="nuts",
+                        all = TRUE)
+    vkmPFactor <- merge(vkmPFactor,vkmPPerType3[,c("nuts","factor_3p","factor_31p")],by="nuts",
+                        all = TRUE)
+    vkmPFactor[is.na(vkmPFactor)]<-1
+    vkmPFactor[sapply(vkmPFactor, is.infinite)] <- 0
+    
+    vkmFFactor <- merge(vkmFPerType1[,c("nuts","factor_1f","factor_11f")],
+                        vkmFPerType2[,c("nuts","factor_2f","factor_21f")],by="nuts",
+                        all = TRUE)
+    vkmFFactor <- merge(vkmFFactor,vkmFPerType3[,c("nuts","factor_3f","factor_31f")],by="nuts",
+                        all = TRUE)
+    vkmFFactor[is.na(vkmFFactor)]<-1  #TODO: Verteilen der potentiell fehlenden km im long und int-Netz (Typ 1/2/3 auf NA)
+    vkmFFactor[sapply(vkmFFactor, is.infinite)] <- 0
+    
+    # apply factor
+    links <- merge(links,vkmPFactor, by="nuts",all.x=TRUE)
+    
+    links[links$type==1, c(pt_type)] <- links[links$type==1, c(pt_type)] * links$factor_1p
+    links[links$type==2, c(pt_type)] <- links[links$type==2, c(pt_type)] * links$factor_2p
+    links[links$type==3, c(pt_type)] <- links[links$type==3, c(pt_type)] * links$factor_3p
+    links[links$type==11,c(pt_type)] <- links[links$type==11,c(pt_type)] * links$factor_11p
+    links[links$type==21,c(pt_type)] <- links[links$type==21,c(pt_type)] * links$factor_21p
+    links[links$type==31,c(pt_type)] <- links[links$type==31,c(pt_type)] * links$factor_31p
+    
+    links <- merge(links,vkmFFactor, by="nuts",all.x=TRUE)
+    links[links$type==1, c(ft_type)] <- links[links$type==1, c(ft_type)] * links$factor_1f
+    links[links$type==2, c(ft_type)] <- links[links$type==2, c(ft_type)] * links$factor_2f
+    links[links$type==3, c(ft_type)] <- links[links$type==3, c(ft_type)] * links$factor_3f
+    links[links$type==11,c(ft_type)] <- links[links$type==11,c(ft_type)] * links$factor_11f
+    links[links$type==21,c(ft_type)] <- links[links$type==21,c(ft_type)] * links$factor_21f
+    links[links$type==31,c(ft_type)] <- links[links$type==31,c(ft_type)] * links$factor_31f
+    
+    links$factor_1p<-links$factor_2p<-links$factor_3p<-
+      links$factor_11p<-links$factor_21p<-links$factor_31p<-
+      links$factor_1f<-links$factor_2f<-links$factor_3f<-
+      links$factor_11f<-links$factor_21f<-links$factor_31f<-NULL
+    
+    rm(vkmPFactor, vkmFFactor, vkmPPerType, vkmFPerType, vkmPPerType1, vkmPPerType2, vkmPPerType3,
+       vkmFPerType1, vkmFPerType2, vkmFPerType3, pt_type, ft_type)
+    
+    print("--------------------------------------------------")
+  }
+  
+  links$pt_long[is.na(links$pt_long)] <- 0
+  links$ft_long[is.na(links$ft_long)] <- 0
+  links$pt_int[is.na(links$pt_int)] <- 0
+  links$ft_int[is.na(links$ft_int)] <- 0
+  
+  links <- links[links$type %in% c(1,2,3),]
+  
+  print("Export all results as SHP...")
+  exportlinks_path <- paste0("all_",country)
+  st_write(links, con, c('tmp', exportlinks_path))
+  print("Export done!")
+  rm(exportlinks_path, links)
+  print("--------------------------------------------------")
+}
+print("finished!")
+runtime <- Sys.time()-start_time
+print(runtime)}
+rm(type_, types, pt, ft, runtime)
+rm(countries, country, types, type_)
+```
+
+```{r}
+# Luxembourg (all countries w/o long visum assigment)
+countries <- c("LU")
+for (country in countries){
+  print(country)
+  link_file <- paste0("s_t_",country)
+  links <- st_read(con, query = 'SELECT * FROM tmp."',link_file,'"')
+  
+  t_file1 <- paste0("_output/pt_",country,".RData")
+  t_file2 <- paste0("_output/ft_",country,".RData")
+  load(t_file1)
+  load(t_file2)
+  rm(t_file1, t_file2, link_file)
+  print("--------------------------------------------------")
+    
+    file_ <- paste0("_output/int_",country,".att")
+    result <- read.csv(file_, skip=12)
+    col1 <- paste0("pt_int")
+    col2 <- paste0("ft_int")
+    names(result) <- c("visum_id","fromnode","tonode","length","nuts",col1, col2)
+    
+    # filter: only German roads
+    
+    result <- result %>%
+      dplyr::filter(grepl(country, nuts))
+    
+    #check pt
+    print("check private transport")
+    vkm_pt <- sum(result$length * result[[col1]])
+    fac <- vkm_pt/pt[["int"]]
+    print(c(pt[["int"]],vkm_pt,fac))
+    if (fac < 0.9 | fac > 1.1){
+      print("Scaling necessary...")
+      result[[col1]] <- result[[col1]]/fac
+    } else {
+        print("No scaling necessary!")
+      }
+    rm(vkm_pt,fac)
+    
+    #check ft
+    print("check freight transport")
+    vkm_ft <- sum(result$length * result[[col2]])
+    fac <- vkm_ft/ft[["int"]]
+    print(c(ft[["int"]],vkm_ft,fac))
+    if (fac < 0.9 | fac > 1.1){
+      print("Scaling necessary...")
+      result[[col2]] <- result[[col2]]/fac
+    } else {
+        print("No scaling necessary!")
+      }
+    rm(vkm_ft,fac)
+    
+    result <- result[,c("visum_id","fromnode","tonode",col1,col2)]
+      
+    links <- merge(links,result, by = c("visum_id","fromnode","tonode"), all.x = TRUE)
+    rm(result, col1, col2, file_)
+    print("--------------------------------------------------")
+    
+    print('distribute link mileage....')
+    pt_type <-'pt_int'
+    ft_type <- 'ft_int'
+    
+    links[[pt_type]][is.na(links[[pt_type]])] <- 0
+    links[[ft_type]][is.na(links[[ft_type]])] <- 0
+    
+    links$vkm_p <- (links[[pt_type]])*links$length
+    links$vkm_f <- (links[[ft_type]])*links$length
+    
+    # aggregate mileage per type
+    vkmPPerType <- aggregate(vkm_p ~ type + nuts , data = links, sum)
+    vkmFPerType <- aggregate(vkm_f ~ type + nuts , data = links, sum)
+    
+    # get factors
+    vkmPPerType1<-merge(vkmPPerType[vkmPPerType$type==1,c("nuts","vkm_p")],
+                        vkmPPerType[vkmPPerType$type==11,c("nuts","vkm_p")],
+                        by=c("nuts"),all.x=TRUE,suffixes = c("_1","_11"))
+    vkmPPerType1$factor_1p<-(vkmPPerType1$vkm_p_1+vkmPPerType1$vkm_p_11)/vkmPPerType1$vkm_p_1
+    vkmPPerType1$factor_11p<-0
+
+    vkmPPerType3<-merge(vkmPPerType[vkmPPerType$type==3,c("nuts","vkm_p")],
+                        vkmPPerType[vkmPPerType$type==31,c("nuts","vkm_p")],
+                        by=c("nuts"),all.x=TRUE,suffixes = c("_3","_31"))
+    vkmPPerType3$factor_3p<-(vkmPPerType3$vkm_p_3+vkmPPerType3$vkm_p_31)/vkmPPerType3$vkm_p_3
+    vkmPPerType3$factor_31p<-0
+    
+    vkmFPerType1<-merge(vkmFPerType[vkmFPerType$type==1,c("nuts","vkm_f")],
+                        vkmFPerType[vkmFPerType$type==11,c("nuts","vkm_f")],
+                        by=c("nuts"),all.x=TRUE,suffixes = c("_1","_11"))
+    vkmFPerType1$factor_1f<-(vkmFPerType1$vkm_f_1+vkmFPerType1$vkm_f_11)/vkmFPerType1$vkm_f_1
+    vkmFPerType1$factor_11f<-0
+    
+    vkmFPerType3<-merge(vkmFPerType[vkmFPerType$type==3,c("nuts","vkm_f")],
+                        vkmFPerType[vkmFPerType$type==31,c("nuts","vkm_f")],
+                        by=c("nuts"),all.x=TRUE,suffixes = c("_3","_31"))
+    vkmFPerType3$factor_3f<-(vkmFPerType3$vkm_f_3+vkmFPerType3$vkm_f_31)/vkmFPerType3$vkm_f_3
+    vkmFPerType3$factor_31f<-0
+    
+    vkmPFactor <- merge(vkmPPerType1[,c("nuts","factor_1p","factor_11p")],
+                        vkmPPerType3[,c("nuts","factor_3p","factor_31p")],by="nuts",
+                        all = TRUE)
+    vkmPFactor[is.na(vkmPFactor)]<-1
+    vkmPFactor[sapply(vkmPFactor, is.infinite)] <- 0
+    
+    vkmFFactor <- merge(vkmFPerType1[,c("nuts","factor_1f","factor_11f")],
+                        vkmFPerType3[,c("nuts","factor_3f","factor_31f")],by="nuts",
+                        all = TRUE)
+    vkmFFactor[is.na(vkmFFactor)]<-1  #TODO: Verteilen der potentiell fehlenden km im long und int-Netz (Typ 1/2/3 auf NA)
+    vkmFFactor[sapply(vkmFFactor, is.infinite)] <- 0
+    
+    # apply factor
+    links <- merge(links,vkmPFactor, by="nuts",all.x=TRUE)
+    
+    links[links$type==1, c(pt_type)] <- links[links$type==1, c(pt_type)] * links$factor_1p
+    links[links$type==3, c(pt_type)] <- links[links$type==3, c(pt_type)] * links$factor_3p
+    links[links$type==11,c(pt_type)] <- links[links$type==11,c(pt_type)] * links$factor_11p
+    links[links$type==31,c(pt_type)] <- links[links$type==31,c(pt_type)] * links$factor_31p
+    
+    links <- merge(links,vkmFFactor, by="nuts",all.x=TRUE)
+    links[links$type==1, c(ft_type)] <- links[links$type==1, c(ft_type)] * links$factor_1f
+    links[links$type==3, c(ft_type)] <- links[links$type==3, c(ft_type)] * links$factor_3f
+    links[links$type==11,c(ft_type)] <- links[links$type==11,c(ft_type)] * links$factor_11f
+    links[links$type==31,c(ft_type)] <- links[links$type==31,c(ft_type)] * links$factor_31f
+    
+    links$factor_1p<-links$factor_3p<-
+      links$factor_11p<-links$factor_31p<-
+      links$factor_1f<-links$factor_3f<-
+      links$factor_11f<-links$factor_31f<-NULL
+    
+    rm(vkmPFactor, vkmFFactor, vkmPPerType, vkmFPerType, vkmPPerType1, vkmPPerType3,
+       vkmFPerType1, vkmFPerType3, pt_type, ft_type)
+    
+    print("--------------------------------------------------")
+  
+  links$pt_int[is.na(links$pt_int)] <- 0
+  links$ft_int[is.na(links$ft_int)] <- 0
+  
+  links <- links[links$type %in% c(1,2,3),]
+  links$pt_long <- 0
+  links$ft_long <- 0
+  
+  print("Export all results as SHP...")
+  exportlinks_path <- paste0("all_",country)
+  st_write(links, con, c('tmp', exportlinks_path))
+  print("Export done!")
+  rm(exportlinks_path, links)
+  print("--------------------------------------------------")
+}
+print("finished!")
+runtime <- Sys.time()-start_time
+print(runtime)
+rm(pt, ft, runtime)
+rm(countries, country)
+
+```
+
+
+The final result can be aggregated further (e.g. to only show total loads of private and freight transport), depending on the desired evaluation.
+
+# Export
+
+```{r export results, warning=FALSE}
+countries <- c("DE")#,"ES","FR","UK","IE","BE","NL","LU","IT","CH","AT","SI","HU","PL","CZ","SK","HR","DK","SE","NO")
+
+
+cold.starts.all <- data.frame("cntr" = character(0),
+                            "starts.pt" = numeric(0),
+                            "mileage.urban.pt" = numeric(0))
+
+#TODO upload to db
+#cells_file <- paste0("//vf-atlas/visum/Projekte/TraK_LK/input_zonen/zonen_europa/zonen_europa_cen/zonen_eu_4326_cen.shp")
+cells_eu_sf <- st_read(con, query = 'SELECT * FROM links_sp."cells_eu_cen"')
+rm(cells_file)
+for (country in countries){
+  print(country)
+  
+  # links
+  link_file <- paste0("all_",country)
+  links <- st_read(con, query = paste0('SELECT * FROM tmp."',link_file,'"'))
+  
+  links$load_car <- links$pt_int + links$pt_long + links$pt_short + links$pt_trans
+  links$load_lcv <- links$ft_lcv
+  links$load_mft <- links$ft_mft
+  links$load_hft <- links$ft_hft + links$ft_long + links$ft_trans + links$ft_int
+  
+  
+  columns <- c("Id", "fromnode", "tonode", "length", "type", "nuts", "urban", "load_car", "load_lcv", "load_mft", "load_hft", "geometry")
+  links <- links[,columns]
+  
+  names(links) <- c("id", "fromnode", "tonode", "length", "type", "nuts_id", "urban", "load_car", "load_lcv", "load_mft", "load_hft", "geometry")
+  
+  links$urban <- ifelse(links$urban == 1, 1,   # innerorts
+                        ifelse(links$type != 1, 2,    # ausserorts
+                        3))                     # Autobahn
+  
+  link_exportfile <- paste0(country,"_links_result")
+  st_write(links, con, c('results', link_exportfile), overwrite=T)
+  
+    
+  # aggregate urban mileage pt and ft for cold.starts
+  cold.file <- paste0("coldstarts_",country)
+  cold.starts <- dbGetQuery(con, paste0(' SELECT * FROM tmp."',cold.file, '"'))
+  # private cars
+  mileage.urban.pt.ag <- aggregate(length*load_car ~ urban, links, sum)
+  mileage.urban.pt <- mileage.urban.pt.ag$`length * load_car`[mileage.urban.pt.ag$urban == 1]
+  cold.starts$mileage.urban.pt <- mileage.urban.pt
+  rm(mileage.urban.pt.ag, mileage.urban.pt)
+  # freight
+  # mileage.urban.ft.ag <- aggregate(length*(load_hft+load_mft+load_lcv) ~ urban, links, sum)
+  # mileage.urban.ft <- mileage.urban.ft.ag$`length * (load_hft + load_mft + load_lcv)`[mileage.urban.ft.ag$urban == 1]
+  # cold.starts$mileage.urban.ft <- mileage.urban.ft
+  # rm(mileage.urban.ft.ag, mileage.urban.ft)
+  
+  # write.csv(cold.starts, cold.file)
+  
+  cold.starts.all <- rbind(cold.starts.all, cold.starts)
+  
+  # cells with secondary
+  # cells_file <- paste0("_shapes/zonen", country, "_crs4326_cen.shp")
+  
+  # filter cells country
+  cells <- cells_eu_sf %>%
+            dplyr::filter(CNTR_CODE == country)
+  
+  cells <- cells[,c("NUTS_ID", "geometry")]
+  
+  file_sec <- paste0("sec_pt_",country)
+  sec <- dbGetQuery(con, paste0(' SELECT * FROM tmp."',file_sec,'"'))
+  
+  cells <- merge(cells, sec[,c("nuts", "pt_vkm")], by.x = "NUTS_ID", by.y = "nuts", all.x = TRUE)
+  names(cells) <- c("nuts_id", "secondary", "geometry")
+  cells$secondary[is.na(cells$secondary)] <- 0
+  
+  cells_exportfile <- paste0(country,"_cells_result")
+  st_write(cells, con, c('results', cells_exportfile), overwrite=T)
+  
+  rm(links, link_exportfile, link_file, cells, cells_exportfile, cold.file, cold.starts)
+}
+
+dbWriteTable(con, c("results","coldstarts_eu"), value = cold.starts.all, overwrite=T, row.names = FALSE)
+
+rm(cold.file, country, cold.starts.all, sec, cells_eu_sf, countries, columns, file_sec)
+```
+
+
+```{r echo = FALSE}
+total_runtime <- Sys.time()-start_time
+print("Runtime total (without Visum)")
+print(total_runtime + total_runtime1)
+rm(total_runtime,total_start, start_time, total_runtime1)
+```
