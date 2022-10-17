@@ -12,14 +12,26 @@ import pandas as pd
 from shapely.geometry import Point
 import numpy as np
 import osmnx as ox
+from shapely.geometry import MultiPolygon
+from shapely.ops import unary_union
 
 
 class Edges:
     """Create edges from OSM"""
 
-    def __init__(self, country):
+    def __init__(self, country, taz, taz_cn="country", taz_geo="geometry"):
+        """
+
+        :@param country: str; code or name of country
+        :@param taz: GeoDataFrame including the TAZ
+        :@param taz_geo: str; Name of geometry column in TAZ layer, default "geometry
+        :@param taz_cn: str; Name of column in TAZ layer that defines the country of the TAZ
+        """
         self.country = country
         self.edges = gpd.GeoDataFrame()
+        self.taz = taz
+        self.taz_cn = taz_cn
+        self.taz_geo = taz_geo
 
     def get_edges(self, filter_highway):
         """
@@ -34,7 +46,14 @@ class Edges:
 
         filter_nw = '["area"!~"yes"]["highway"~"{}"]["motor_vehicle"!~"no"]["motorcar"!~"no"]["access"!~"private"]["service"!~"parking|parking_aisle|driveway|private|emergency_access"]'.format(
             fil_str)
-        G = ox.graph_from_place(self.country, simplify=False, custom_filter=filter_nw)
+
+        # get polygon for country
+        taz_cn = self.taz[self.taz[self.taz_cn] == self.country]
+        if len(taz_cn) > 1:
+            poly = MultiPolygon(unary_union(taz_cn.geometry))
+        else:
+            poly = taz_cn.iloc[0][self.taz_geo]
+        G = ox.graph_from_polygon(poly, simplify=False, custom_filter=filter_nw)
         G = ox.simplify_graph(G)
         # option: separate secondary from here
         G = ox.simplification.consolidate_intersections(G, tolerance=0.002)
@@ -44,18 +63,17 @@ class Edges:
         self.edges.loc[self.edges["speed_kph"] > 150, "speed_kph"] = 50
         self.edges.crs = "epsg:4326"
 
-    def set_attributes(self, taz, taz_id, taz_geo="geometry", start_id=0):
+    def set_attributes(self, taz_id, start_id=0):
         """
         Overlay self.edges with TAZ layer to split links at borders and assign TAZ-ID
         Set length, travel time, highway type and ID of self.edges GeoDataFrame
-        :param taz: GeoDataFrame of TAZ layer (polygons)
+
         :param taz_id: str; Name of ID-column in TAZ layer
-        :param taz_geo: str; Name of geometry column in TAZ layer, default "geometry
         :param start_id: int; start of IDs for each edge, default 0
         :return:
         """
 
-        self.edges = gpd.overlay(self.edges, taz[[taz_id, taz_geo]], how='union')
+        self.edges = gpd.overlay(self.edges, self.taz[[taz_id, self.taz_geo]], how='union')
         self.edges = self.edges.explode()
         # calculate length in km
         self.edges = self.edges.to_crs(epsg=3035)
@@ -93,24 +111,25 @@ class Edges:
         self.edges.rename(columns={nodeid_col: "to_node"}, inplace=True)
         self.edges = self.edges[["ultimo_id", "from_node", "to_node", "type", "nuts_id", "length", "speed_kph", "tt", "geometry"]]
 
-    def subordinate_road_length(self, taz, taz_id, taz_geo="geometry", sub_type="secondary"):
+    def subordinate_road_length(self, taz_id, taz_geo="geometry", sub_type="secondary"):
         """
         Calculate the subordinate network length per TAZ for a selected category
-        :param taz: GeoDataFrame of TAZ layer (polygons)
+
         :param taz_id: str; Name of ID-column in TAZ layer
         :param taz_geo: str; Name of geometry column in TAZ layer, default "geometry
         :param sub_type: str; highway type for subordinate network, default "secondary"
         :return: DataFrame with aggregated network length per TAZ
         """
         # get subordinate network from OSM
-        filter_nw = '["area"!~"yes"]["highway"~"{}"]["motor_vehicle"!~"no"]["motorcar"!~"no"]["access"!~"private"]["service"!~"parking|parking_aisle|driveway|private|emergency_access"]'.format(
-            sub_type)
-        G = ox.graph_from_place(self.country, simplify=False, custom_filter=filter_nw)
-        G = ox.simplify_graph(G)
-        sub_edges = gpd.GeoDataFrame([x[2] for x in G.edges.data()])[["highway", "geometry"]]
+        taz_cn = self.taz[self.taz[self.taz_cn] == self.country]
+        poly = MultiPolygon(unary_union(taz_cn.geometry))
+        sub_edges = ox.geometries.geometries_from_polygon(poly, tags={"highway": sub_type})
+        # remove geometries other than line
+        if len(sub_edges.geom_type.unique()) > 1:
+            sub_edges = sub_edges[sub_edges.geom_type.isin(["MultiLineString", "LineString"])].copy()
         # overlay with TAZ: assign taz id to edges
         sub_edges.crs = 'epsg:4326'
-        sub_edges = gpd.overlay(sub_edges, taz[[taz_id, taz_geo]], how='union')
+        sub_edges = gpd.overlay(sub_edges['geometry'], self.taz[[taz_id, taz_geo]], how='union')
         # calculate length per edge in km and aggregate length per taz
         sub_edges = sub_edges.to_crs(epsg=3035)
         sub_edges["length"] = sub_edges.length / 1000
@@ -180,6 +199,5 @@ class Nodes:
         """
         self.nodes_unique[id_col] = np.arange(len(self.nodes_unique)) + start
         # join unique ID to all nodes
-        # self.nodes['xy'] = [str(list(p.coords)) for p in self.nodes['geom']]
         self.nodes = pd.merge(self.nodes, self.nodes_unique[["xy", id_col]], how="left", on="xy")
         self.nodes = self.nodes[[id_col, "LinkID", "order", "geom"]]
