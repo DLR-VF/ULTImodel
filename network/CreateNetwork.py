@@ -14,6 +14,21 @@ import numpy as np
 import osmnx as ox
 from shapely.geometry import MultiPolygon
 from shapely.ops import unary_union
+from scipy.spatial import cKDTree
+from sklearn.cluster import KMeans
+
+
+def ckdnearest(gdA, gdB, bcol, which):
+    nA = np.array(list(zip(gdA.geometry.y, gdA.geometry.x)) )
+    nB = np.array(list(zip(gdB.geometry.y, gdB.geometry.x)) )
+    btree = cKDTree(nB)
+    dist, idx = btree.query(nA,k=[which])
+    dist = np.squeeze(dist)
+    idx = np.squeeze(idx)
+    #print (idx)
+    df = pd.DataFrame.from_dict({'distance': dist,#.astype(int),
+                                 bcol : gdB.loc[idx, bcol].values})
+    return df
 
 
 class Edges:
@@ -111,7 +126,7 @@ class Edges:
         self.edges.rename(columns={nodeid_col: "to_node"}, inplace=True)
         self.edges = self.edges[["ultimo_id", "from_node", "to_node", "type", "nuts_id", "length", "speed_kph", "tt", "geometry"]]
 
-    def subordinate_road_length(self, taz_id, taz_geo="geometry", sub_type="secondary"):
+    def subordinate_road_length(self, taz_id, sub_type="secondary"):
         """
         Calculate the subordinate network length per TAZ for a selected category
 
@@ -122,14 +137,17 @@ class Edges:
         """
         # get subordinate network from OSM
         taz_cn = self.taz[self.taz[self.taz_cn] == self.country]
-        poly = MultiPolygon(unary_union(taz_cn.geometry))
+        if len(taz_cn) > 1:
+            poly = MultiPolygon(unary_union(taz_cn.geometry))
+        else:
+            poly = taz_cn.iloc[0][self.taz_geo]
         sub_edges = ox.geometries.geometries_from_polygon(poly, tags={"highway": sub_type})
         # remove geometries other than line
         if len(sub_edges.geom_type.unique()) > 1:
             sub_edges = sub_edges[sub_edges.geom_type.isin(["MultiLineString", "LineString"])].copy()
         # overlay with TAZ: assign taz id to edges
         sub_edges.crs = 'epsg:4326'
-        sub_edges = gpd.overlay(sub_edges['geometry'], self.taz[[taz_id, taz_geo]], how='union')
+        sub_edges = gpd.overlay(sub_edges[['geometry']], self.taz[[taz_id, self.taz_geo]], how='union')
         # calculate length per edge in km and aggregate length per taz
         sub_edges = sub_edges.to_crs(epsg=3035)
         sub_edges["length"] = sub_edges.length / 1000
@@ -201,3 +219,105 @@ class Nodes:
         # join unique ID to all nodes
         self.nodes = pd.merge(self.nodes, self.nodes_unique[["xy", id_col]], how="left", on="xy")
         self.nodes = self.nodes[[id_col, "LinkID", "order", "geom"]]
+
+
+class Connectors:
+    """
+    Connect the TAZ to the road network: find possible connector locations and identif corresponding nodes
+    """
+
+    def __init__(self):
+        """
+
+
+        """
+
+
+    def find_connector_locations(self, taz, pop, taz_id="nuts_id", taz_geom="geom", epsg_pop=4326):
+        """
+        Identify suitable connector locations per TAZ depending on population density
+
+        @param epsg_pop: int; CRS of population dataframe, default 4326
+        @param taz: GeoDataFrame with the TAZ
+        @param taz_geom: str; name of geometry column in TAZ GDF
+        @param taz_id: str; name of ID column for TAZ IDs
+        @param pop: GeoDataFrame of points with population density
+
+        @return GeoDataFrame with connector locations; Point layer
+        """
+        cols = ["nuts_id","c_n", "weight", "geometry"]
+        return_con = gpd.GeoDataFrame(columns=cols)
+
+        taz = taz.to_crs(epsg=3035)
+        taz['area'] = taz.area/1000**2
+        taz["numcon"] = 3
+        taz.loc[taz["area"] > 1000, "numcon"] = 4
+        taz.loc[taz["area"] > 7500, "numcon"] = 5
+        taz.loc[taz["area"] > 15000, "numcon"] = 6
+
+        # overlay pop and taz
+        taz = taz.to_crs(epsg=epsg_pop)
+        pop_taz = gpd.overlay(pop, taz[[taz_id, taz_geom]])
+
+        for t in taz[taz_id].unique():
+            pop_t = pop_taz[pop_taz[taz_id]==t]
+            if len(pop_t) > 0:
+                n_c = int(taz.loc[taz[taz_id]==t, "numcon"])
+                kmeans = KMeans(init="random", n_clusters=n_c, n_init=10, max_iter=300, random_state=42)
+                kmeans.fit(list(zip(pop_t.geometry.x, pop_t.geometry.y)))
+                # assign pop to cluster
+                pop_t = pd.concat([pop_t.reset_index(), pd.Series(kmeans.labels_, name="c_n")], axis=1)
+                # create GeoDataFrame with weights and coordinates of centers (connectors)
+                conn = gpd.GeoDataFrame(pop_t.groupby("c_n")['VALUE'].apply(sum).reset_index(),
+                                 geometry=[Point(xy) for xy in kmeans.cluster_centers_])
+                conn['weight'] = conn['VALUE'] / conn['VALUE'].sum()
+                conn['nuts_id'] = t
+                conn = conn[cols]
+                return_con = return_con.append(conn)
+
+        return return_con
+
+    def identify_connector_nodes(self, nodes, con, node_no="node_id", geom="geom", con_no="c_n", zone="nuts_id", weight="weight"):
+        """
+        Move connector locations to network nodes
+
+        @param nodes: GeoDataFrame Points; network nodes
+        @param con: GeoDataFrame Points; connector locations
+        @param node_no: str; column name with node identifyer
+
+        @return GeoDataFrame with connector nodes
+        """
+        # set CRS
+        nodes = nodes.to_crs(epsg=3035)
+        con = con.to_crs(epsg=3035)
+
+        # find one node per connector location
+        distances = ckdnearest(con, nodes, node_no, 1)
+        output = con[[con_no, zone, weight]].merge(distances, left_index=True, right_index=True)
+
+        # check for duplicates
+        con_nodes = output[[node_no, zone, con_no]].groupby([zone, node_no], as_index=False).count()
+
+        if len(con_nodes) != len(output):
+            print('Duplicates detected!')
+            output["distprod"] = output['distance'] * 1/output[weight]
+            dup_no = con_nodes.loc[con_nodes[con_no] > 1][node_no].tolist()
+            dup = output[output[node_no].isin(dup_no)].copy()
+            min_dis = dup.groupby([zone, node_no])['distprod'].transform('min').unique()
+            delete = dup.loc[~dup['distprod'].isin(min_dis), con_no].tolist()
+            keep = dup.loc[dup['distprod'].isin(min_dis), con_no].tolist()
+            print(len(delete), sum(output.loc[output[con_no].isin(delete), weight]))
+            output = output[~output[con_no].isin(delete)].copy()
+            # correct weights: add deleted weight to remaining connector (duplicates only removed for same TAZ)
+            delete_weights = dup.groupby([zone, node_no])[weight].apply(sum).reset_index()
+            delete_weights.columns = [zone, node_no, "newweight"]
+            output = output.merge(delete_weights, on=[zone, node_no], how="left")
+            output.loc[~output['newweight'].isna(), weight] = output['newweight']
+            print(sum(output[weight]))
+        else:
+            print('No duplicates detected!')
+
+        # create GDF with correct connector nodes
+        connodes = nodes[[node_no, geom]].merge(output[[node_no, zone, con_no, weight]], on=node_no, how="right")
+
+        return connodes
