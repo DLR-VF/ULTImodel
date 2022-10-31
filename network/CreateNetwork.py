@@ -18,16 +18,16 @@ from scipy.spatial import cKDTree
 from sklearn.cluster import KMeans
 
 
-def ckdnearest(gdA, gdB, bcol, which):
+def ckdnearest(gdA, gdB, bcol, n):
     nA = np.array(list(zip(gdA.geometry.y, gdA.geometry.x)) )
     nB = np.array(list(zip(gdB.geometry.y, gdB.geometry.x)) )
     btree = cKDTree(nB)
-    dist, idx = btree.query(nA,k=[which])
-    dist = np.squeeze(dist)
-    idx = np.squeeze(idx)
-    #print (idx)
-    df = pd.DataFrame.from_dict({'distance': dist,#.astype(int),
-                                 bcol : gdB.loc[idx, bcol].values})
+    dist, idx = btree.query(nA,k=n)
+    df = pd.DataFrame(columns=[bcol, 'distance', '{}_near'.format(bcol)])
+    for i in range(idx.shape[1]):
+        dfi = pd.DataFrame.from_dict({bcol: gdA[bcol], 'distance': dist[:,i],#.astype(int),
+                                     '{}_near'.format(bcol) : gdB.reset_index().loc[idx[:,i], bcol].values})
+        df = pd.concat([df,dfi], axis=0)
     return df
 
 
@@ -232,7 +232,6 @@ class Connectors:
 
         """
 
-
     def find_connector_locations(self, taz, pop, taz_id="nuts_id", taz_geom="geom", epsg_pop=4326):
         """
         Identify suitable connector locations per TAZ depending on population density
@@ -321,3 +320,176 @@ class Connectors:
         connodes = nodes[[node_no, geom]].merge(output[[node_no, zone, con_no, weight]], on=node_no, how="right")
 
         return connodes
+
+
+class CombineNetworks:
+    """
+    Merge road networks of multiple countries / regions to create a routable international network
+    """
+
+    def __init__(self, taz, roads, taz_cn='cntr_code'):
+        """
+
+        @param taz: GDF; TAZ for regions
+        @param roads: GDF; road network covering all regions
+        @param taz_cn: str; column name for country in taz
+        """
+        self.taz = taz
+        self.taz_cn = taz_cn
+        self.network = roads
+        self.network_int = gpd.GeoDataFrame()
+        self.border_roads = gpd.GeoDataFrame()
+        self.borders = gpd.GeoDataFrame()
+        self.countries = taz[taz_cn].unique()
+        self.dict_borders={}
+
+    def find_borders(self, buffer=2500, taz_geo='geometry'):
+        """
+        Create polygons with a defined buffer around the borders
+
+        @param buffer: float; buffer width in m
+        @return: GDF with border polygons
+        """
+        # dissolve zones per country
+        taz_dis = self.taz.dissolve(by=self.taz_cn, aggfunc="sum").reset_index()
+        # set buffer around polgon borders (width of border polygons)
+        taz_dis.to_crs(epsg=3035, inplace=True)
+        taz_dis[taz_geo] = taz_dis[taz_geo].buffer(buffer/2)
+        # find borders for each country
+        gdf_borderbuffer = gpd.GeoDataFrame()
+
+        for country in self.countries:
+
+            country_ = taz_dis[taz_dis[self.taz_cn] == country]
+            country_ = country_[taz_geo].buffer(1)
+
+            for index, row in taz_dis.iterrows():
+
+                if row[self.taz_cn] != country:
+                    intersec = country_.intersection(row[taz_geo].buffer(1))
+                    if not intersec.values.is_empty[0]:
+                        gdf_borderbuffer = gdf_borderbuffer.append(
+                            {'country1': country, 'country2': row[self.taz_cn], 'geometry': intersec.values[0]},
+                            ignore_index=True)
+
+        # merge borders create and set geometry
+        borders = pd.merge(gdf_borderbuffer, gdf_borderbuffer, left_on=['country1', 'country2'],
+                              right_on=['country2', 'country1'])
+        borders['geometry'] = [r['geometry_x'].union(r['geometry_y']) for i, r in borders.iterrows()]
+        borders['border'] = borders['country1_x'] + borders['country1_y']
+        borders = borders.set_geometry('geometry')
+        borders.crs = 3035
+        # remove duplicates
+        borders['abc'] = ["".join(sorted(row['border'])) for i, row in borders.iterrows()]
+        borders.drop_duplicates(subset="abc", inplace=True)
+        # finalize
+        borders = borders[['border', 'country1_x', 'country1_y', 'geometry']]
+        borders.to_crs(epsg=4326, inplace=True)
+
+        self.borders = borders
+
+    def get_border_roads(self, roads_cn="cn"):
+        """
+        Find all roads within the border buffer
+
+        @param roads_cn: str; column name with country attribute in roads GDF
+        @return: self.border_roads; GDF with all roads within border buffer
+        """
+        if self.borders.crs == self.network.crs:
+            self.border_roads = gpd.overlay(self.network, self.borders, how='union')
+            # remove all streets that are not within the border
+            self.border_roads = self.border_roads[~self.border_roads['border'].isna()].copy()
+            # remove streets that are assigned to a wrong border
+            self.border_roads = self.border_roads[(self.border_roads[roads_cn] == self.border_roads['country1_x']) |
+                                                  (self.border_roads[roads_cn] == self.border_roads['country2_x'])]
+        else:
+            print("CRS not matching!\n    Borders {}\n    Roads {}".format(self.borders.crs, self.border_roads.crs))
+
+    def connect_border_roads(self, nodes_int, id_st=900000000, roads_cn='cn', roads_type='type', filter_types=[1,2],
+                             roads_id="ultimo_id", roads_fr="from_node", roads_to="to_node", node_id="node_id", node_geo="geom"):
+        """
+        Create new directed lines between the nearest end nodes of each country at the border
+
+        @param nodes_int: GDF; contains nodes of network
+        @param id_st: int; start ID for new lines
+        @param roads_cn: str; column name for country in self.network
+        @param roads_type: str; column name for road type in self.network
+        @param filter_types: list; types of roads to be included for international connections
+        @param roads_id: str; column name for id in self.network
+        @param roads_fr: str; column name for the start node in self.network
+        @param roads_to: str; column name for the destination node in self.network
+        @param node_id: str; column name for id in nodes
+        @param node_geo: str; column name for geometry in nodes
+        @return: GDF with connected network, dictionary with number of connected roads
+        """
+        lines = gpd.GeoDataFrame(columns=self.network.columns)
+
+        id_st = id_st
+        # iterate over borders
+        print("Start connecting border roads at {}".format(datetime.now()))
+        for b in self.borders['border'].unique():
+            # find all fitting edges for both countries
+            edges_b1 = self.border_roads[(self.border_roads[roads_cn] == b[:2]) & (self.border_roads['border'] == b) &
+                                         (self.border_roads[type].isin(filter_types))]
+            edges_b2 = self.border_roads[(self.border_roads[roads_cn] == b[2:]) & (self.border_roads['border'] == b) &
+                                         (self.border_roads[type].isin(filter_types))]
+            # check if there are edges in both countries
+            if (len(edges_b1) > 0) & (len(edges_b2) > 0):
+                # get end nodes in both countries
+                nodes_b11 = edges_b1[[roads_id, roads_fr]].rename(columns={roads_fr: node_id})
+                nodes_b11['dir'] = 'from'
+                nodes_b12 = edges_b1[[roads_id, roads_to]].rename(columns={roads_to: node_id})
+                nodes_b12['dir'] = 'to'
+                nodes_b1 = pd.concat([nodes_b11, nodes_b12]).groupby('node_id')[roads_id].agg('count').reset_index()
+                nodes_b1 = nodes_b1[nodes_b1[roads_id] == nodes_b1[roads_id].min()]
+                nodes_b21 = edges_b2[[roads_id, roads_fr]].rename(columns={roads_fr: node_id})
+                nodes_b21['dir'] = 'from'
+                nodes_b22 = edges_b2[[roads_id, roads_to]].rename(columns={roads_to: node_id})
+                nodes_b22['dir'] = 'to'
+                nodes_b2 = pd.concat([nodes_b21, nodes_b22]).groupby('node_id')[roads_id].agg('count').reset_index()
+                nodes_b2 = nodes_b2[nodes_b2[roads_id] == nodes_b2[roads_id].min()]
+                nodes_dir = pd.concat([nodes_b11, nodes_b12, nodes_b21, nodes_b22])
+                # get coordinates
+                nodes_b1 = nodes_b1.merge(nodes_int[[node_id, node_geo]], how='left', on=node_id)
+                nodes_b1 = nodes_b1.set_geometry(node_geo)
+                nodes_b2 = nodes_b2.merge(nodes_int[[node_id, node_geo]], how='left', on=node_id)
+                nodes_b2 = nodes_b2.set_geometry(node_geo)
+                # get the two nearest nodes for each node
+                nearest_b1 = ckdnearest(nodes_b1, nodes_b2, node_id, 2)
+                nearest_b2 = ckdnearest(nodes_b2, nodes_b1, node_id, 2)
+                # find nearest node pairs (nearest nodes match) and remove duplicate connections
+                pairs_b = nearest_b1.merge(nearest_b2, left_on=[node_id, '{}_near'.format(node_id)], right_on=['{}_near'.format(node_id), node_id],
+                                           how='inner')[['{}_x'.format(node_id), '{}_y'.format(node_id), 'distance_x']]
+                # find correct direction
+                pairs_b = pairs_b.merge(nodes_dir[[node_id, 'dir']], left_on='{}_x'.format(node_id), right_on=node_id,
+                                        how='left')
+                pairs_b = pairs_b.merge(nodes_dir[[node_id, 'dir']], left_on='{}_y'.format(node_id), right_on=node_id,
+                                        how='left')
+                pairs_b = pairs_b.loc[:, ~pairs_b.columns.duplicated()]
+                pairs_b = pairs_b[pairs_b['dir_x'] != pairs_b['dir_y']]
+                pairs_b['node_from'] = [row['{}_x'.format(node_id)] if row['dir_x'] == 'to' else row['{}_y'.format(node_id)] for i, row in
+                                        pairs_b.iterrows()]
+                pairs_b['node_to'] = [row['{}_x'.format(node_id)] if row['dir_x'] == 'from' else row['{}_y'.format(node_id)] for i, row in
+                                      pairs_b.iterrows()]
+                # remove duplicate connections (if a node is paired with multiple other nodes)
+                pairs_b = pairs_b.sort_values(by='distance_x')
+                pairs_b = pairs_b.drop_duplicates(subset='node_from')
+                pairs_b = pairs_b.drop_duplicates(subset='node_to')
+                pairs_b = [[row['node_from'], row['node_to']] for i, row in pairs_b.iterrows()]
+                # create lines between node pairs
+                for l in pairs_b:
+                    # get coordinates and create LineString
+                    node_from = nodes_int.loc[nodes_int[node_id] == l[0], 'geom']
+                    node_to = nodes_int.loc[nodes_int[node_id] == l[1], 'geom']
+                    line = LineString([[node_from.x, node_from.y], [node_to.x, node_to.y]])
+                    # add to Lines GDF
+                    lines.loc[len(lines) + 1] = [id_st, l[0], l[1], 999, b + '0', 0, 50, 0, line]
+                    id_st += 1
+                self.dict_borders = dict_borders.update({b: len(pairs_b)})
+            else:
+                print('No border connection for {}'.format(b))
+                self.dict_borders = dict_borders.update({b: 0})
+
+        # concat border crossings and rest of the network
+        self.network_int = pd.concat([self.network, lines])
+        print("Finished connecting border roads at {}".format(datetime.now()))
