@@ -1,33 +1,33 @@
 # =========================================================
 # CreateNetwork.py
 # @author Nina Thomsen
-# @date 29.09.2022
+# @date 20.12.2022
 # @copyright Institut fuer Verkehrsforschung,
 #            Deutsches Zentrum fuer Luft- und Raumfahrt
 # @brief Creates nodes between edges
 # =========================================================
+from datetime import datetime
 
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import Point
+from shapely.geometry import Point, LineString, MultiPolygon
 import numpy as np
 import osmnx as ox
-from shapely.geometry import MultiPolygon
 from shapely.ops import unary_union
 from scipy.spatial import cKDTree
 from sklearn.cluster import KMeans
 
 
 def ckdnearest(gdA, gdB, bcol, n):
-    nA = np.array(list(zip(gdA.geometry.y, gdA.geometry.x)) )
-    nB = np.array(list(zip(gdB.geometry.y, gdB.geometry.x)) )
+    nA = np.array(list(zip(gdA.geometry.y, gdA.geometry.x)))
+    nB = np.array(list(zip(gdB.geometry.y, gdB.geometry.x)))
     btree = cKDTree(nB)
-    dist, idx = btree.query(nA,k=n)
+    dist, idx = btree.query(nA, k=n)
     df = pd.DataFrame(columns=[bcol, 'distance', '{}_near'.format(bcol)])
     for i in range(idx.shape[1]):
-        dfi = pd.DataFrame.from_dict({bcol: gdA[bcol], 'distance': dist[:,i],#.astype(int),
-                                     '{}_near'.format(bcol) : gdB.reset_index().loc[idx[:,i], bcol].values})
-        df = pd.concat([df,dfi], axis=0)
+        dfi = pd.DataFrame.from_dict({bcol: gdA[bcol], 'distance': dist[:, i],  # .astype(int),
+                                      '{}_near'.format(bcol): gdB.reset_index().loc[idx[:, i], bcol].values})
+        df = pd.concat([df, dfi], axis=0)
     return df
 
 
@@ -48,13 +48,46 @@ class Edges:
         self.taz_cn = taz_cn
         self.taz_geo = taz_geo
 
-    def get_edges(self, filter_highway):
+    def get_polygon(self, taz_id, proj_crs=3035, buffer=2500):
+        """
+        Define polygon(s) for network extraction; split islands and exclaves and apply buffer to include all streets near the border
+
+        @param taz_id: str; Name of ID-column in TAZ layer
+        @param proj_crs: int; EPSG number of projected crs for defining buffer in meter, default 3035 (LAEA europe)
+        @param buffer: int, float; buffer in meter
+        @return: GeoDataFrame with polygons for extraction; multiple polygons if there are islands or exclaves
+        """
+        # start: filter country
+        taz_cn = self.taz[self.taz[self.taz_cn] == self.country].copy()
+        taz_crs = taz_cn.crs
+        # get all separate polygons (islands, exclaves)
+        t_e = taz_cn.explode()
+
+        # find islands belonging to the same TAZ id and create hull
+        if len(t_e[taz_id].unique()) > 1:
+            isl = t_e.groupby(taz_id)[self.taz_geo].agg('count').reset_index()
+            isl = isl[isl[self.taz_geo] > 1]
+            # create hull for same TAZ id islands
+            for i in isl[taz_id]:
+                hull = taz_cn.loc[taz_cn[taz_id] == i].unary_union.convex_hull
+                taz_cn.loc[taz_cn[taz_id] == i, self.taz_geo] = hull
+
+        # apply buffer (include all roads in coastal regions, islands that are not far away and their bridges
+        taz_cn.to_crs(epsg=proj_crs, inplace=True)
+        taz_cn[self.taz_geo] = taz_cn[self.taz_geo].buffer(buffer)
+        taz_cn.to_crs(taz_crs, inplace=True)
+
+        # return polygons
+        return taz_cn.dissolve().explode()
+
+    def get_edges(self, filter_highway, polygons):  # add poly attribute, either none or input
         """
         Get network for selected highway types from OSM for specified country
 
-        :param filter_highway: List of OSM highway types to include; only main types (e.g. motorway), respective
+        :@param filter_highway: list; List of OSM highway types to include; only main types (e.g. motorway), respective
                                link-types (e.g. motorway_link) are included automatically
-        :type filter_highway: list
+        :@param polygons: GeoDataFrame; polygons of country / region to extract network from, several polygons possible
+        :@return self.edges includes routable network
         """
         filter_highway.extend(["{}_link".format(h) for h in filter_highway])
         fil_str = "|".join(filter_highway)
@@ -63,16 +96,20 @@ class Edges:
             fil_str)
 
         # get polygon for country
-        taz_cn = self.taz[self.taz[self.taz_cn] == self.country]
-        if len(taz_cn) > 1:
-            poly = MultiPolygon(unary_union(taz_cn.geometry))
-        else:
-            poly = taz_cn.iloc[0][self.taz_geo]
-        G = ox.graph_from_polygon(poly, simplify=False, custom_filter=filter_nw)
-        G = ox.simplify_graph(G)
-        # option: separate secondary from here
-        G = ox.simplification.consolidate_intersections(G, tolerance=0.002)
-        G = ox.speed.add_edge_speeds(G, fallback=50, precision=0)
+        polygons = polygons
+        for i, poly in enumerate(polygons[self.taz_geo][:]):
+            try:
+                G = ox.graph_from_polygon(poly, simplify=False, custom_filter=filter_nw)
+                G = ox.simplify_graph(G)
+                G = ox.simplification.consolidate_intersections(G, tolerance=0.002)
+                G = ox.speed.add_edge_speeds(G, fallback=50, precision=0)
+                edges = gpd.GeoDataFrame([x[2] for x in G.edges.data()])[["highway", "speed_kph", "geometry"]]
+                if i == 0:
+                    self.edges = edges.copy()
+                else:
+                    self.edges = pd.concat([self.edges, edges.reset_index()])
+            except:
+                print('No edges for polygon {}'.format(i))
         self.edges = gpd.GeoDataFrame([x[2] for x in G.edges.data()])[["highway", "speed_kph", "geometry"]]
         # correct speeds
         self.edges.loc[self.edges["speed_kph"] > 150, "speed_kph"] = 50
@@ -83,19 +120,19 @@ class Edges:
         Overlay self.edges with TAZ layer to split links at borders and assign TAZ-ID
         Set length, travel time, highway type and ID of self.edges GeoDataFrame
 
-        :param taz_id: str; Name of ID-column in TAZ layer
-        :param start_id: int; start of IDs for each edge, default 0
-        :return:
+        :@param taz_id: str; Name of ID-column in TAZ layer
+        :@param start_id: int; start of IDs for each edge, default 0
+        :@return: self.edges is updated with necessary attributes
         """
 
         self.edges = gpd.overlay(self.edges, self.taz[[taz_id, self.taz_geo]], how='union')
         self.edges = self.edges.explode()
         # calculate length in km
         self.edges = self.edges.to_crs(epsg=3035)
-        self.edges["length"] = self.edges.length/1000
+        self.edges["length"] = self.edges.length / 1000
         self.edges = self.edges.to_crs(epsg=4326)
         # calculate travel time in s
-        self.edges["tt"] = np.round((self.edges["length"] / self.edges["speed_kph"])*60**2)
+        self.edges["tt"] = np.round((self.edges["length"] / self.edges["speed_kph"]) * 60 ** 2)
         # set ID, type as numeric
         self.edges = self.edges.to_crs(epsg=4326)
         self.edges["ultimo_id"] = np.arange(len(self.edges)) + start_id
@@ -109,31 +146,33 @@ class Edges:
     def set_nodes(self, nodes, order_col, nodeid_col="node_id", linkid_col="ultimo_id"):
         """
         Set start and end node for each edge in self.edges based on node GDF
-        :param nodes: GeoDataFrame with start and end node per edge
-        :param order_col: str; Name of column with order of nodes per edge in nodes
-        :param nodeid_col: str; Name of column with node ID in nodes, defaul "node_id"
-        :param linkid_col: str; Name of column with link ID in self.edges, default "ultimo_id"
-        :return:
+        :@param nodes: GeoDataFrame with start and end node per edge
+        :@param order_col: str; Name of column with order of nodes per edge in nodes
+        :@param nodeid_col: str; Name of column with node ID in nodes, defaul "node_id"
+        :@param linkid_col: str; Name of column with link ID in self.edges, default "ultimo_id"
+        :@return: self.edges includes from and to nodes
         """
         # merge start nodes
         st_nodes = nodes[nodes[order_col] == 0]
-        self.edges = pd.merge(self.edges, st_nodes[[linkid_col, nodeid_col]], left_on="ultimo_id", right_on=linkid_col, how="left")
+        self.edges = pd.merge(self.edges, st_nodes[[linkid_col, nodeid_col]], left_on="ultimo_id", right_on=linkid_col,
+                              how="left")
         self.edges.rename(columns={nodeid_col: "from_node"}, inplace=True)
         # merge start nodes
         en_nodes = nodes[nodes[order_col] == 1]
         self.edges = pd.merge(self.edges, en_nodes[[linkid_col, nodeid_col]], left_on="ultimo_id", right_on=linkid_col,
                               how="left")
         self.edges.rename(columns={nodeid_col: "to_node"}, inplace=True)
-        self.edges = self.edges[["ultimo_id", "from_node", "to_node", "type", "nuts_id", "length", "speed_kph", "tt", "geometry"]]
+        self.edges = self.edges[
+            ["ultimo_id", "from_node", "to_node", "type", "nuts_id", "length", "speed_kph", "tt", "geometry"]]
 
     def subordinate_road_length(self, taz_id, sub_type="secondary"):
         """
         Calculate the subordinate network length per TAZ for a selected category
 
-        :param taz_id: str; Name of ID-column in TAZ layer
-        :param taz_geo: str; Name of geometry column in TAZ layer, default "geometry
-        :param sub_type: str; highway type for subordinate network, default "secondary"
-        :return: DataFrame with aggregated network length per TAZ
+        :@param taz_id: str; Name of ID-column in TAZ layer
+        :@param taz_geo: str; Name of geometry column in TAZ layer, default "geometry
+        :@param sub_type: str; highway type for subordinate network, default "secondary"
+        :@return: DataFrame with aggregated network length per TAZ
         """
         # get subordinate network from OSM
         taz_cn = self.taz[self.taz[self.taz_cn] == self.country]
@@ -160,7 +199,7 @@ class Nodes:
 
     def __init__(self, edges):
         """
-        :param edges: GeoDataFrame with LineString-Objects
+        :@param edges: GeoDataFrame with LineString-Objects
         """
         self.edges = edges
         self.nodes = gpd.GeoDataFrame()
@@ -176,9 +215,9 @@ class Nodes:
         !! only works with LineStrings, not with MultiLineString
         !! use gpd.GeoDataFrame.explode() to transform MultiLineString to LineString
 
-        :param id_col: str; name of column with unique identifier in edges GDF
-        :param geom_col: str; name of geometry column in edges GDF, default "geometry"
-        :return GeoDataFrame self.nodes
+        :@param id_col: str; name of column with unique identifier in edges GDF
+        :@param geom_col: str; name of geometry column in edges GDF, default "geometry"
+        :@return GeoDataFrame self.nodes
         """
         self.init_nodes()
         LinkId_list = self.edges[id_col].to_list()
@@ -197,7 +236,7 @@ class Nodes:
     def remove_duplicates(self):
         """
         Remove duplicate nodes (i.e. at the same coordinates)
-        :return: GeoDataFrame self.nodes.unique without duplicates
+        :@return: GeoDataFrame self.nodes.unique without duplicates
         """
         self.nodes['xy'] = [str(list(p.coords)) for p in self.nodes['geom']]
         # collect LinkIDs per point
@@ -211,9 +250,9 @@ class Nodes:
     def set_node_id(self, id_col="node_id", start=0):
         """
         Set ID per unique node and assign this ID to all nodes
-        :param id_col: str; name of ID column for nodes, default "node_id"
-        :param start: int; start of IDs for each node, default 0
-        :return: GeoDataFrame of self.nodes, self.nodes_unique with ID column
+        :@param id_col: str; name of ID column for nodes, default "node_id"
+        :@param start: int; start of IDs for each node, default 0
+        :@return: GeoDataFrame of self.nodes, self.nodes_unique with ID column
         """
         self.nodes_unique[id_col] = np.arange(len(self.nodes_unique)) + start
         # join unique ID to all nodes
@@ -244,11 +283,11 @@ class Connectors:
 
         @return GeoDataFrame with connector locations; Point layer
         """
-        cols = ["nuts_id","c_n", "weight", "geometry"]
+        cols = ["nuts_id", "c_n", "weight", "geometry"]
         return_con = gpd.GeoDataFrame(columns=cols)
 
         taz = taz.to_crs(epsg=3035)
-        taz['area'] = taz.area/1000**2
+        taz['area'] = taz.area / 1000 ** 2
         taz["numcon"] = 3
         taz.loc[taz["area"] > 1000, "numcon"] = 4
         taz.loc[taz["area"] > 7500, "numcon"] = 5
@@ -259,16 +298,16 @@ class Connectors:
         pop_taz = gpd.overlay(pop, taz[[taz_id, taz_geom]])
 
         for t in taz[taz_id].unique():
-            pop_t = pop_taz[pop_taz[taz_id]==t]
+            pop_t = pop_taz[pop_taz[taz_id] == t]
             if len(pop_t) > 0:
-                n_c = int(taz.loc[taz[taz_id]==t, "numcon"])
+                n_c = int(taz.loc[taz[taz_id] == t, "numcon"])
                 kmeans = KMeans(init="random", n_clusters=n_c, n_init=10, max_iter=300, random_state=42)
                 kmeans.fit(list(zip(pop_t.geometry.x, pop_t.geometry.y)))
                 # assign pop to cluster
                 pop_t = pd.concat([pop_t.reset_index(), pd.Series(kmeans.labels_, name="c_n")], axis=1)
                 # create GeoDataFrame with weights and coordinates of centers (connectors)
                 conn = gpd.GeoDataFrame(pop_t.groupby("c_n")['VALUE'].apply(sum).reset_index(),
-                                 geometry=[Point(xy) for xy in kmeans.cluster_centers_])
+                                        geometry=[Point(xy) for xy in kmeans.cluster_centers_])
                 conn['weight'] = conn['VALUE'] / conn['VALUE'].sum()
                 conn['nuts_id'] = t
                 conn = conn[cols]
@@ -276,15 +315,20 @@ class Connectors:
 
         return return_con
 
-    def identify_connector_nodes(self, nodes, con, node_no="node_id", geom="geom", con_no="c_n", zone="nuts_id", weight="weight"):
+    def identify_connector_nodes(self, nodes, con, node_no="node_id", geom="geom", con_no="c_n", zone="nuts_id",
+                                 weight="weight"):
         """
         Move connector locations to network nodes
 
+        @return GeoDataFrame with connector nodes
         @param nodes: GeoDataFrame Points; network nodes
         @param con: GeoDataFrame Points; connector locations
         @param node_no: str; column name with node identifyer
-
-        @return GeoDataFrame with connector nodes
+        @param geom: str; name of geometry column in nodes GDF
+        @param con_no: str; column name with connector identifyer
+        @param zone: str; column name with zone identifyer
+        @param weight: str; column name with weight of connector
+        @return: GeoDataFrame with connector nodes
         """
         # set CRS
         nodes = nodes.to_crs(epsg=3035)
@@ -299,7 +343,7 @@ class Connectors:
 
         if len(con_nodes) != len(output):
             print('Duplicates detected!')
-            output["distprod"] = output['distance'] * 1/output[weight]
+            output["distprod"] = output['distance'] * 1 / output[weight]
             dup_no = con_nodes.loc[con_nodes[con_no] > 1][node_no].tolist()
             dup = output[output[node_no].isin(dup_no)].copy()
             min_dis = dup.groupby([zone, node_no])['distprod'].transform('min').unique()
@@ -341,20 +385,21 @@ class CombineNetworks:
         self.border_roads = gpd.GeoDataFrame()
         self.borders = gpd.GeoDataFrame()
         self.countries = taz[taz_cn].unique()
-        self.dict_borders={}
+        self.dict_borders = {}
 
     def find_borders(self, buffer=2500, taz_geo='geometry'):
         """
         Create polygons with a defined buffer around the borders
 
-        @param buffer: float; buffer width in m
+        @param buffer: int, float; buffer width in m
+        @param taz_geo: str; name of geometry column in TAZ GDF
         @return: GDF with border polygons
         """
         # dissolve zones per country
         taz_dis = self.taz.dissolve(by=self.taz_cn, aggfunc="sum").reset_index()
         # set buffer around polgon borders (width of border polygons)
         taz_dis.to_crs(epsg=3035, inplace=True)
-        taz_dis[taz_geo] = taz_dis[taz_geo].buffer(buffer/2)
+        taz_dis[taz_geo] = taz_dis[taz_geo].buffer(buffer / 2)
         # find borders for each country
         gdf_borderbuffer = gpd.GeoDataFrame()
 
@@ -374,7 +419,7 @@ class CombineNetworks:
 
         # merge borders create and set geometry
         borders = pd.merge(gdf_borderbuffer, gdf_borderbuffer, left_on=['country1', 'country2'],
-                              right_on=['country2', 'country1'])
+                           right_on=['country2', 'country1'])
         borders['geometry'] = [r['geometry_x'].union(r['geometry_y']) for i, r in borders.iterrows()]
         borders['border'] = borders['country1_x'] + borders['country1_y']
         borders = borders.set_geometry('geometry')
@@ -405,8 +450,9 @@ class CombineNetworks:
         else:
             print("CRS not matching!\n    Borders {}\n    Roads {}".format(self.borders.crs, self.border_roads.crs))
 
-    def connect_border_roads(self, nodes_int, id_st=900000000, roads_cn='cn', roads_type='type', filter_types=[1,2],
-                             roads_id="ultimo_id", roads_fr="from_node", roads_to="to_node", node_id="node_id", node_geo="geom"):
+    def connect_border_roads(self, nodes_int, id_st=900000000, roads_cn='cn', roads_type='type', filter_types=[1, 2],
+                             roads_id="ultimo_id", roads_fr="from_node", roads_to="to_node", node_id="node_id",
+                             node_geo="geom"):
         """
         Create new directed lines between the nearest end nodes of each country at the border
 
@@ -458,7 +504,8 @@ class CombineNetworks:
                 nearest_b1 = ckdnearest(nodes_b1, nodes_b2, node_id, 2)
                 nearest_b2 = ckdnearest(nodes_b2, nodes_b1, node_id, 2)
                 # find nearest node pairs (nearest nodes match) and remove duplicate connections
-                pairs_b = nearest_b1.merge(nearest_b2, left_on=[node_id, '{}_near'.format(node_id)], right_on=['{}_near'.format(node_id), node_id],
+                pairs_b = nearest_b1.merge(nearest_b2, left_on=[node_id, '{}_near'.format(node_id)],
+                                           right_on=['{}_near'.format(node_id), node_id],
                                            how='inner')[['{}_x'.format(node_id), '{}_y'.format(node_id), 'distance_x']]
                 # find correct direction
                 pairs_b = pairs_b.merge(nodes_dir[[node_id, 'dir']], left_on='{}_x'.format(node_id), right_on=node_id,
@@ -467,10 +514,12 @@ class CombineNetworks:
                                         how='left')
                 pairs_b = pairs_b.loc[:, ~pairs_b.columns.duplicated()]
                 pairs_b = pairs_b[pairs_b['dir_x'] != pairs_b['dir_y']]
-                pairs_b['node_from'] = [row['{}_x'.format(node_id)] if row['dir_x'] == 'to' else row['{}_y'.format(node_id)] for i, row in
-                                        pairs_b.iterrows()]
-                pairs_b['node_to'] = [row['{}_x'.format(node_id)] if row['dir_x'] == 'from' else row['{}_y'.format(node_id)] for i, row in
-                                      pairs_b.iterrows()]
+                pairs_b['node_from'] = [
+                    row['{}_x'.format(node_id)] if row['dir_x'] == 'to' else row['{}_y'.format(node_id)] for i, row in
+                    pairs_b.iterrows()]
+                pairs_b['node_to'] = [
+                    row['{}_x'.format(node_id)] if row['dir_x'] == 'from' else row['{}_y'.format(node_id)] for i, row in
+                    pairs_b.iterrows()]
                 # remove duplicate connections (if a node is paired with multiple other nodes)
                 pairs_b = pairs_b.sort_values(by='distance_x')
                 pairs_b = pairs_b.drop_duplicates(subset='node_from')
@@ -485,10 +534,10 @@ class CombineNetworks:
                     # add to Lines GDF
                     lines.loc[len(lines) + 1] = [id_st, l[0], l[1], 999, b + '0', 0, 50, 0, line]
                     id_st += 1
-                self.dict_borders = dict_borders.update({b: len(pairs_b)})
+                self.dict_borders = self.dict_borders.update({b: len(pairs_b)})
             else:
                 print('No border connection for {}'.format(b))
-                self.dict_borders = dict_borders.update({b: 0})
+                self.dict_borders = self.dict_borders.update({b: 0})
 
         # concat border crossings and rest of the network
         self.network_int = pd.concat([self.network, lines])
