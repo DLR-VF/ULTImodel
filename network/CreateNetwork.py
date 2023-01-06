@@ -10,12 +10,12 @@ from datetime import datetime
 
 import geopandas as gpd
 import pandas as pd
+from sklearn.cluster import KMeans
 from shapely.geometry import Point, LineString, MultiPolygon
 import numpy as np
 import osmnx as ox
 from shapely.ops import unary_union
 from scipy.spatial import cKDTree
-from sklearn.cluster import KMeans
 
 
 def ckdnearest(gdA, gdB, bcol, n):
@@ -66,7 +66,7 @@ class Edges:
         taz_cn = self.taz[self.taz[self.taz_cn] == self.country].copy()
         taz_crs = taz_cn.crs
         # get all separate polygons (islands, exclaves)
-        t_e = taz_cn.explode()
+        t_e = taz_cn.explode(index_parts=True)
 
         # find islands belonging to the same TAZ id and create hull
         if len(t_e[taz_id].unique()) > 1:
@@ -77,13 +77,14 @@ class Edges:
                 hull = taz_cn.loc[taz_cn[taz_id] == i].unary_union.convex_hull
                 taz_cn.loc[taz_cn[taz_id] == i, self.taz_geo] = hull
 
+        taz_cn_e = taz_cn.dissolve().explode(index_parts=True)
         # apply buffer (include all roads in coastal regions, islands that are not far away and their bridges
-        taz_cn.to_crs(epsg=proj_crs, inplace=True)
-        taz_cn[self.taz_geo] = taz_cn[self.taz_geo].buffer(buffer)
-        taz_cn.to_crs(taz_crs, inplace=True)
+        taz_cn_e.to_crs(epsg=proj_crs, inplace=True)
+        taz_cn_e[self.taz_geo] = taz_cn_e[self.taz_geo].buffer(buffer)
+        taz_cn_e.to_crs(taz_crs, inplace=True)
 
         # return polygons
-        return taz_cn.dissolve().explode()
+        return taz_cn_e
 
     def get_edges(self, filter_highway, polygons):  # add poly attribute, either none or input
         """
@@ -230,6 +231,7 @@ class Nodes:
         self.init_nodes()
         LinkId_list = self.edges[id_col].to_list()
         coords_list = [line.coords for i, line in enumerate(self.edges[geom_col])]
+        # TODO convert to numpy array with arr = construct_1d_object_array_from_listlike(values)
         for LinkId, coords in zip(LinkId_list, coords_list):
             index_num = self.nodes.shape[0]
             # 1st point
@@ -379,9 +381,9 @@ class Connectors:
 
 class Ferries:
     """
-    Create connections over water between islands and main land
+    Create connections over water between islands and main land, using ferry routes and bridges as reference
     """
-
+    # todo include bridges
     def __init__(self, taz, scope=None, taz_cn='cntr_code', taz_geo='geom'):
         """
 
@@ -410,11 +412,13 @@ class Ferries:
         @param buffer_water: float; buffer to use around land mass to extract water polygon, in degrees
         @return: self.ferry and self.nodes include ferry routes and their end nodes
         """
-        # create polygon of waterbody for region
+        # create polygon of water body for region
         hull = self.region.unary_union.convex_hull
         water = hull.difference(self.region[self.taz_geo].buffer(buffer_water).unary_union)
-        # get ferry routes for waterbody
+        # get ferry routes for water body
         self.ferry = ox.geometries.geometries_from_polygon(water, tags={"route": "ferry", "motor_vehicle": "yes"})
+        # todo get bridges
+        #bridges = ox.geometries.geometries_from_polygon(water, tags={"bridge": "yes", "highway": "motorway"})
         # remove non-LineString geometries
         if len(self.ferry.geom_type.unique()) > 1:
             self.ferry = self.ferry[self.ferry.geom_type.isin(["MultiLineString", "LineString"])].copy()
@@ -474,7 +478,7 @@ class Ferries:
         return ferry_routes, ferry_nodes
 
     def ferry_to_road(self, ferry_routes, ferry_nodes, network_roads, network_nodes, ferry_buffer_m=2500, speed_ferry=30,
-                      roads_id="ultimo_id", roads_fr="from_node", roads_to="to_node",node_id="node_id"):
+                      roads_id="ultimo_id", roads_fr="from_node", roads_to="to_node", node_id="node_id"):
         """
         Connect ferry end nodes to road network and add as links (direct lines)
 
@@ -605,7 +609,7 @@ class CombineNetworks:
         """
         # dissolve zones per country
         taz_dis = self.taz.dissolve(by=self.taz_cn, aggfunc="sum").reset_index()
-        # set buffer around polgon borders (width of border polygons)
+        # set buffer around polygon borders (width of border polygons)
         taz_dis.to_crs(epsg=3035, inplace=True)
         taz_dis[taz_geo] = taz_dis[taz_geo].buffer(buffer / 2)
         # find borders for each country
@@ -654,11 +658,11 @@ class CombineNetworks:
             self.border_roads = self.border_roads[~self.border_roads['border'].isna()].copy()
             # remove streets that are assigned to a wrong border
             self.border_roads = self.border_roads[(self.border_roads[roads_cn] == self.border_roads['country1_x']) |
-                                                  (self.border_roads[roads_cn] == self.border_roads['country2_x'])]
+                                                  (self.border_roads[roads_cn] == self.border_roads['country1_y'])]
         else:
             print("CRS not matching!\n    Borders {}\n    Roads {}".format(self.borders.crs, self.border_roads.crs))
 
-    def connect_border_roads(self, nodes_int, id_st=900000000, roads_cn='cn', roads_type='type', filter_types=[1, 2],
+    def connect_border_roads(self, nodes_int, id_st=900000000, roads_cn='cn', roads_type='type', filter_types=None,
                              roads_id="ultimo_id", roads_fr="from_node", roads_to="to_node", node_id="node_id",
                              node_geo="geom"):
         """
@@ -676,6 +680,8 @@ class CombineNetworks:
         @param node_geo: str; column name for geometry in nodes
         @return: GDF with connected network, dictionary with number of connected roads
         """
+        if filter_types is None:
+            filter_types = [1, 2]
         lines = gpd.GeoDataFrame(columns=self.network.columns)
 
         id_st = id_st
@@ -684,9 +690,9 @@ class CombineNetworks:
         for b in self.borders['border'].unique():
             # find all fitting edges for both countries
             edges_b1 = self.border_roads[(self.border_roads[roads_cn] == b[:2]) & (self.border_roads['border'] == b) &
-                                         (self.border_roads[type].isin(filter_types))]
+                                         (self.border_roads[roads_type].isin(filter_types))]
             edges_b2 = self.border_roads[(self.border_roads[roads_cn] == b[2:]) & (self.border_roads['border'] == b) &
-                                         (self.border_roads[type].isin(filter_types))]
+                                         (self.border_roads[roads_type].isin(filter_types))]
             # check if there are edges in both countries
             if (len(edges_b1) > 0) & (len(edges_b2) > 0):
                 # get end nodes in both countries
@@ -695,13 +701,19 @@ class CombineNetworks:
                 nodes_b12 = edges_b1[[roads_id, roads_to]].rename(columns={roads_to: node_id})
                 nodes_b12['dir'] = 'to'
                 nodes_b1 = pd.concat([nodes_b11, nodes_b12]).groupby('node_id')[roads_id].agg('count').reset_index()
-                nodes_b1 = nodes_b1[nodes_b1[roads_id] == nodes_b1[roads_id].min()]
+                if len(nodes_b1[nodes_b1[roads_id] == nodes_b1[roads_id].min()]) == 1:
+                    nodes_b1 = nodes_b1[nodes_b1[roads_id] == nodes_b1[roads_id].min()+1]
+                else:
+                    nodes_b1 = nodes_b1[nodes_b1[roads_id] == nodes_b1[roads_id].min()]
                 nodes_b21 = edges_b2[[roads_id, roads_fr]].rename(columns={roads_fr: node_id})
                 nodes_b21['dir'] = 'from'
                 nodes_b22 = edges_b2[[roads_id, roads_to]].rename(columns={roads_to: node_id})
                 nodes_b22['dir'] = 'to'
                 nodes_b2 = pd.concat([nodes_b21, nodes_b22]).groupby('node_id')[roads_id].agg('count').reset_index()
-                nodes_b2 = nodes_b2[nodes_b2[roads_id] == nodes_b2[roads_id].min()]
+                if len(nodes_b2[nodes_b2[roads_id] == nodes_b2[roads_id].min()]) == 1:
+                    nodes_b2 = nodes_b2[nodes_b2[roads_id] == nodes_b2[roads_id].min()+1]
+                else:
+                    nodes_b2 = nodes_b2[nodes_b2[roads_id] == nodes_b2[roads_id].min()]
                 nodes_dir = pd.concat([nodes_b11, nodes_b12, nodes_b21, nodes_b22])
                 # get coordinates
                 nodes_b1 = nodes_b1.merge(nodes_int[[node_id, node_geo]], how='left', on=node_id)
@@ -740,12 +752,12 @@ class CombineNetworks:
                     node_to = nodes_int.loc[nodes_int[node_id] == l[1], 'geom']
                     line = LineString([[node_from.x, node_from.y], [node_to.x, node_to.y]])
                     # add to Lines GDF
-                    lines.loc[len(lines) + 1] = [id_st, l[0], l[1], 999, b + '0', 0, 50, 0, line]
+                    lines.loc[len(lines) + 1] = [id_st, l[0], l[1], 999, b + '0', 0, 50, 0, line, np.nan]
                     id_st += 1
-                self.dict_borders = self.dict_borders.update({b: len(pairs_b)})
+                self.dict_borders.update({b: len(pairs_b)})
             else:
                 print('No border connection for {}'.format(b))
-                self.dict_borders = self.dict_borders.update({b: 0})
+                self.dict_borders.update({b: 0})
 
         # concat border crossings and rest of the network
         self.network_int = pd.concat([self.network, lines])
