@@ -283,6 +283,7 @@ class Connectors:
 
 
         """
+        self.connectors = gpd.GeoDataFrame()
 
     def find_connector_locations(self, taz, pop, taz_id="nuts_id", taz_geom="geom", epsg_pop=4326):
         """
@@ -294,7 +295,7 @@ class Connectors:
         @param taz_id: str; name of ID column for TAZ IDs
         @param pop: GeoDataFrame of points with population density
 
-        @return GeoDataFrame with connector locations; Point layer
+        @return self.connectors as GeoDataFrame with connector locations; Point layer
         """
         cols = ["nuts_id", "c_n", "weight", "geometry"]
         return_con = gpd.GeoDataFrame(columns=cols)
@@ -326,44 +327,45 @@ class Connectors:
                 conn = conn[cols]
                 return_con = return_con.append(conn)
 
-        return return_con
+        self.connectors = return_con
+        self.connectors.crs = epsg_pop
+        self.connectors['c_n'] = self.connectors.reset_index().index
 
-    def identify_connector_nodes(self, nodes, con, node_no="node_id", geom="geom", con_no="c_n", zone="nuts_id",
+
+    def identify_connector_nodes(self, nodes, node_no="node_id", node_geom="geom", zone="nuts_id",
                                  weight="weight"):
         """
         Move connector locations to network nodes
 
         @return GeoDataFrame with connector nodes
         @param nodes: GeoDataFrame Points; network nodes
-        @param con: GeoDataFrame Points; connector locations
         @param node_no: str; column name with node identifyer
-        @param geom: str; name of geometry column in nodes GDF
-        @param con_no: str; column name with connector identifyer
+        @param node_geom: str; name of geometry column in nodes GDF
         @param zone: str; column name with zone identifyer
         @param weight: str; column name with weight of connector
         @return: GeoDataFrame with connector nodes
         """
         # set CRS
         nodes = nodes.to_crs(epsg=3035)
+        con = self.connectors.copy()
         con = con.to_crs(epsg=3035)
 
         # find one node per connector location
         distances = ckdnearest(con, nodes, node_no, 1)
-        output = con[[con_no, zone, weight]].merge(distances, left_index=True, right_index=True)
+        output = con[['c_n', zone, weight]].merge(distances, left_index=True, right_index=True)
 
         # check for duplicates
-        con_nodes = output[[node_no, zone, con_no]].groupby([zone, node_no], as_index=False).count()
+        con_nodes = output[[node_no, zone, 'c_n']].groupby([zone, node_no], as_index=False).count()
 
         if len(con_nodes) != len(output):
             print('Duplicates detected!')
             output["distprod"] = output['distance'] * 1 / output[weight]
-            dup_no = con_nodes.loc[con_nodes[con_no] > 1][node_no].tolist()
+            dup_no = con_nodes.loc[con_nodes['c_n'] > 1][node_no].tolist()
             dup = output[output[node_no].isin(dup_no)].copy()
             min_dis = dup.groupby([zone, node_no])['distprod'].transform('min').unique()
-            delete = dup.loc[~dup['distprod'].isin(min_dis), con_no].tolist()
-            keep = dup.loc[dup['distprod'].isin(min_dis), con_no].tolist()
-            print(len(delete), sum(output.loc[output[con_no].isin(delete), weight]))
-            output = output[~output[con_no].isin(delete)].copy()
+            delete = dup.loc[~dup['distprod'].isin(min_dis), 'c_n'].tolist()
+            print(len(delete), sum(output.loc[output['c_n'].isin(delete), weight]))
+            output = output[~output['c_n'].isin(delete)].copy()
             # correct weights: add deleted weight to remaining connector (duplicates only removed for same TAZ)
             delete_weights = dup.groupby([zone, node_no])[weight].apply(sum).reset_index()
             delete_weights.columns = [zone, node_no, "newweight"]
@@ -374,7 +376,7 @@ class Connectors:
             print('No duplicates detected!')
 
         # create GDF with correct connector nodes
-        connodes = nodes[[node_no, geom]].merge(output[[node_no, zone, con_no, weight]], on=node_no, how="right")
+        connodes = nodes[[node_no, node_geom]].merge(output[[node_no, zone, 'c_n', weight]], on=node_no, how="right")
 
         return connodes
 
@@ -383,7 +385,7 @@ class Ferries:
     """
     Create connections over water between islands and main land, using ferry routes and bridges as reference
     """
-    # todo include bridges
+
     def __init__(self, taz, scope=None, taz_cn='cntr_code', taz_geo='geom'):
         """
 
