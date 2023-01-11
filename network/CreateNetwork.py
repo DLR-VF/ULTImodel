@@ -415,17 +415,21 @@ class Ferries:
         # create polygon of water body for region
         hull = self.region.unary_union.convex_hull
         water = hull.difference(self.region[self.taz_geo].buffer(buffer_water).unary_union)
-        # get ferry routes for water body
-        self.ferry = ox.geometries.geometries_from_polygon(water, tags={"route": "ferry", "motor_vehicle": "yes"})
-        # todo get bridges
-        #bridges = ox.geometries.geometries_from_polygon(water, tags={"bridge": "yes", "highway": "motorway"})
+        # get ferry routes and bridges with roads for water body
+        print(". . . extracting bridges and ferries from OSM")
+        self.ferry = ox.geometries.geometries_from_polygon(water, tags={"route": "ferry", "highway": ["motorway", "trunk"]})
+        print(". . . bridges and ferries extracted!")
         # remove non-LineString geometries
         if len(self.ferry.geom_type.unique()) > 1:
             self.ferry = self.ferry[self.ferry.geom_type.isin(["MultiLineString", "LineString"])].copy()
+        # filter only ferries with motor vehicle or bridges with highway attribute
+        self.ferry = self.ferry[(~self.ferry['highway'].isna()) | (self.ferry['motor_vehicle'] == "yes")].copy()
         # set attributes and reduce to relevant columns
         self.ferry['id'] = list(range(len(self.ferry)))
         self.ferry = self.ferry.reset_index()
-        self.ferry = self.ferry[['id', 'geometry']]
+        self.ferry['type'] = 9  # ferry
+        self.ferry.loc[~self.ferry['highway'].isna(), 'type'] = 8  # bridge
+        self.ferry = self.ferry[['id', 'geometry', 'type']]
         # create ferry end nodes
         nodes = Nodes(self.ferry)
         nodes.create_nodes('id')
@@ -485,7 +489,7 @@ class Ferries:
         @param ferry_routes: GeoDataFrame with ferry routes (lines)
         @param ferry_nodes: GeoDataFrame with ferry nodes (points)
         @param network_roads: GeoDataFrame with road network (lines)
-        @param network_nodes: GeoDataFrame with road network nodes (points)
+        @param network_nodes: GeoDataFrame with unique road network nodes (points)
         @param ferry_buffer_m: float; buffer size around ferry nodes for finding connecting roads in meter
         @param speed_ferry: float; speed on ferry link in kph
         @param roads_id: str; name of column with road identifier in network_roads
@@ -523,38 +527,44 @@ class Ferries:
                     len_ferry.to_crs(epsg=3035, inplace=True)
                     len_ferry['len'] = len_ferry.length / 1000
                     len_ferry = float(len_ferry['len'])
+                    # type (ferry=9, bridge=8)
+                    type_ferry = int(ferry_routes.loc[ferry_routes['id'] == ferry, 'type'])
+                    if type_ferry == 8:
+                        speed = 60
+                    else:
+                        speed = speed_ferry
 
                     # connect roads at start and end
                     # start from nodes 1-0
                     nodes_0f = roads_ferry_0[[roads_id, roads_fr]].rename(columns={roads_fr: node_id})
                     # find closest node to ferry node
-                    nodes_0f = nodes_0f.merge(network_nodes[[node_id, 'LinkID', 'geom']], how='left',
-                                              left_on=[node_id, roads_id], right_on=[node_id, 'LinkID'])
+                    nodes_0f = nodes_0f.merge(network_nodes[[node_id, 'geom']], how='left',
+                                              left_on=node_id, right_on=node_id)
                     nodes_0f = nodes_0f.set_geometry('geom')
                     node_0f = ckdnearest(node_ferry_0, nodes_0f, node_id, 1)
                     node_0f = nodes_0f[nodes_0f[node_id] == int(node_0f['{}_near'.format(node_id)])]
                     # end to nodes 1-0
                     nodes_1t = roads_ferry_1[[roads_id, roads_to]].rename(columns={roads_to: node_id})
-                    # find clostest node to ferry node
-                    nodes_1t = nodes_1t.merge(network_nodes[[node_id, 'LinkID', 'geom']], how='left',
-                                              left_on=[node_id, roads_id], right_on=[node_id, 'LinkID'])
+                    # find closest node to ferry node
+                    nodes_1t = nodes_1t.merge(network_nodes[[node_id, 'geom']], how='left',
+                                              left_on=node_id, right_on=node_id)
                     nodes_1t = nodes_1t.set_geometry('geom')
                     node_1t = ckdnearest(node_ferry_1, nodes_1t, node_id, 1)
                     node_1t = nodes_1t[nodes_1t[node_id] == int(node_1t['{}_near'.format(node_id)])]
                     node_pair_10 = [node_1t.iloc[0], node_0f.iloc[0]]
                     # start to nodes 0-1
                     nodes_0t = roads_ferry_0[[roads_id, roads_to]].rename(columns={roads_to: node_id})
-                    # find clostest node to ferry node
-                    nodes_0t = nodes_0t.merge(network_nodes[[node_id, 'LinkID', 'geom']], how='left',
-                                              left_on=[node_id, roads_id], right_on=[node_id, 'LinkID'])
+                    # find closest node to ferry node
+                    nodes_0t = nodes_0t.merge(network_nodes[[node_id, 'geom']], how='left',
+                                              left_on=node_id, right_on=node_id)
                     nodes_0t = nodes_0t.set_geometry('geom')
                     node_0t = ckdnearest(node_ferry_0, nodes_0t, node_id, 1)
                     node_0t = nodes_0t[nodes_0t[node_id] == int(node_0t['{}_near'.format(node_id)])]
                     # end from nodes 0-1
                     nodes_1f = roads_ferry_1[[roads_id, roads_fr]].rename(columns={roads_fr: node_id})
                     # find clostest node to ferry node
-                    nodes_1f = nodes_1f.merge(network_nodes[[node_id, 'LinkID', 'geom']], how='left',
-                                              left_on=[node_id, roads_id], right_on=[node_id, 'LinkID'])
+                    nodes_1f = nodes_1f.merge(network_nodes[[node_id, 'geom']], how='left',
+                                              left_on=node_id, right_on=node_id)
                     nodes_1f = nodes_1f.set_geometry('geom')
                     node_1f = ckdnearest(node_ferry_1, nodes_1f, node_id, 1)
                     node_1f = nodes_1f[nodes_1f[node_id] == int(node_1f['{}_near'.format(node_id)])]
@@ -567,8 +577,8 @@ class Ferries:
                         node_to = l[1]['geom']
                         line = LineString([[node_from.x, node_from.y], [node_to.x, node_to.y]])
                         # add to Lines GDF
-                        lines.loc[len(lines) + 1] = [id_st, l[0][node_id], l[1][node_id], 9, 'FERRY',
-                                                     len_ferry, speed_ferry, (len_ferry / speed_ferry) * 60 ** 2, line]
+                        lines.loc[len(lines) + 1] = [id_st, l[0][node_id], l[1][node_id], type_ferry, 'FERRY',
+                                                     len_ferry, speed, (len_ferry / speed) * 60 ** 2, line]
                         id_st += 1
                 else:
                     print('no start / end connection for ferry route {}'.format(ferry))
