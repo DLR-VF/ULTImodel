@@ -18,20 +18,20 @@ from shapely.ops import unary_union
 from scipy.spatial import cKDTree
 
 
-def ckdnearest(gdA, gdB, bcol, n):
+def ckdnearest(gdA, gdB, bcolA, bcolB, n):
     nA = np.array(list(zip(gdA.geometry.y, gdA.geometry.x)))
     nB = np.array(list(zip(gdB.geometry.y, gdB.geometry.x)))
     btree = cKDTree(nB)
     dist, idx = btree.query(nA, k=n)
-    df = pd.DataFrame(columns=[bcol, 'distance', '{}_near'.format(bcol)])
+    df = pd.DataFrame(columns=[bcolA, 'distance', '{}_near'.format(bcolB)])
     if n > 1:
         for i in range(idx.shape[1]):
-            dfi = pd.DataFrame.from_dict({bcol: gdA[bcol], 'distance': dist[:, i],  # .astype(int),
-                                          '{}_near'.format(bcol): gdB.reset_index().loc[idx[:, i], bcol].values})
+            dfi = pd.DataFrame.from_dict({bcolA: gdA[bcolA], 'distance': dist[:, i],  # .astype(int),
+                                          '{}_near'.format(bcolB): gdB.reset_index().loc[idx[:, i], bcolB].values})
             df = pd.concat([df, dfi], axis=0)
     else:
-        dfi = pd.DataFrame.from_dict({bcol: gdA[bcol], 'distance': dist,  # .astype(int),
-                                      '{}_near'.format(bcol): gdB.reset_index().loc[idx, bcol].values})
+        dfi = pd.DataFrame.from_dict({bcolA: gdA[bcolA], 'distance': dist,  # .astype(int),
+                                      '{}_near'.format(bcolB): gdB.reset_index().loc[idx, bcolB].values})
         df = pd.concat([df, dfi], axis=0)
     return df
 
@@ -331,7 +331,6 @@ class Connectors:
         self.connectors.crs = epsg_pop
         self.connectors['c_n'] = self.connectors.reset_index().index
 
-
     def identify_connector_nodes(self, nodes, node_no="node_id", node_geom="geom", zone="nuts_id",
                                  weight="weight"):
         """
@@ -345,14 +344,12 @@ class Connectors:
         @param weight: str; column name with weight of connector
         @return: GeoDataFrame with connector nodes
         """
-        # set CRS
-        nodes = nodes.to_crs(epsg=3035)
         con = self.connectors.copy()
-        con = con.to_crs(epsg=3035)
 
         # find one node per connector location
-        distances = ckdnearest(con, nodes, node_no, 1)
-        output = con[['c_n', zone, weight]].merge(distances, left_index=True, right_index=True)
+        distances = ckdnearest(con, nodes, 'c_n', node_no, 1)
+        output = con[[zone, weight]].merge(distances, left_index=True, right_index=True)
+        output.rename(columns={'{}_near'.format(node_no): node_no}, inplace=True)
 
         # check for duplicates
         con_nodes = output[[node_no, zone, 'c_n']].groupby([zone, node_no], as_index=False).count()
@@ -377,6 +374,7 @@ class Connectors:
 
         # create GDF with correct connector nodes
         connodes = nodes[[node_no, node_geom]].merge(output[[node_no, zone, 'c_n', weight]], on=node_no, how="right")
+        connodes.set_geometry('geom', inplace=True)
 
         return connodes
 
@@ -543,7 +541,7 @@ class Ferries:
                     nodes_0f = nodes_0f.merge(network_nodes[[node_id, 'geom']], how='left',
                                               left_on=node_id, right_on=node_id)
                     nodes_0f = nodes_0f.set_geometry('geom')
-                    node_0f = ckdnearest(node_ferry_0, nodes_0f, node_id, 1)
+                    node_0f = ckdnearest(node_ferry_0, nodes_0f, node_id, node_id, 1)
                     node_0f = nodes_0f[nodes_0f[node_id] == int(node_0f['{}_near'.format(node_id)])]
                     # end to nodes 1-0
                     nodes_1t = roads_ferry_1[[roads_id, roads_to]].rename(columns={roads_to: node_id})
@@ -551,7 +549,7 @@ class Ferries:
                     nodes_1t = nodes_1t.merge(network_nodes[[node_id, 'geom']], how='left',
                                               left_on=node_id, right_on=node_id)
                     nodes_1t = nodes_1t.set_geometry('geom')
-                    node_1t = ckdnearest(node_ferry_1, nodes_1t, node_id, 1)
+                    node_1t = ckdnearest(node_ferry_1, nodes_1t, node_id, node_id, 1)
                     node_1t = nodes_1t[nodes_1t[node_id] == int(node_1t['{}_near'.format(node_id)])]
                     node_pair_10 = [node_1t.iloc[0], node_0f.iloc[0]]
                     # start to nodes 0-1
@@ -560,7 +558,7 @@ class Ferries:
                     nodes_0t = nodes_0t.merge(network_nodes[[node_id, 'geom']], how='left',
                                               left_on=node_id, right_on=node_id)
                     nodes_0t = nodes_0t.set_geometry('geom')
-                    node_0t = ckdnearest(node_ferry_0, nodes_0t, node_id, 1)
+                    node_0t = ckdnearest(node_ferry_0, nodes_0t, node_id, node_id, 1)
                     node_0t = nodes_0t[nodes_0t[node_id] == int(node_0t['{}_near'.format(node_id)])]
                     # end from nodes 0-1
                     nodes_1f = roads_ferry_1[[roads_id, roads_fr]].rename(columns={roads_fr: node_id})
@@ -568,7 +566,7 @@ class Ferries:
                     nodes_1f = nodes_1f.merge(network_nodes[[node_id, 'geom']], how='left',
                                               left_on=node_id, right_on=node_id)
                     nodes_1f = nodes_1f.set_geometry('geom')
-                    node_1f = ckdnearest(node_ferry_1, nodes_1f, node_id, 1)
+                    node_1f = ckdnearest(node_ferry_1, nodes_1f, node_id, node_id, 1)
                     node_1f = nodes_1f[nodes_1f[node_id] == int(node_1f['{}_near'.format(node_id)])]
                     node_pair_01 = [node_0t.iloc[0], node_1f.iloc[0]]
                     pairs = [node_pair_01, node_pair_10]
@@ -733,8 +731,8 @@ class CombineNetworks:
                 nodes_b2 = nodes_b2.merge(nodes_int[[node_id, node_geo]], how='left', on=node_id)
                 nodes_b2 = nodes_b2.set_geometry(node_geo)
                 # get the two nearest nodes for each node
-                nearest_b1 = ckdnearest(nodes_b1, nodes_b2, node_id, 2)
-                nearest_b2 = ckdnearest(nodes_b2, nodes_b1, node_id, 2)
+                nearest_b1 = ckdnearest(nodes_b1, nodes_b2, node_id, node_id, 2)
+                nearest_b2 = ckdnearest(nodes_b2, nodes_b1, node_id, node_id, 2)
                 # find nearest node pairs (nearest nodes match) and remove duplicate connections
                 pairs_b = nearest_b1.merge(nearest_b2, left_on=[node_id, '{}_near'.format(node_id)],
                                            right_on=['{}_near'.format(node_id), node_id],
