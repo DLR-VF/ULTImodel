@@ -4,7 +4,7 @@
 # @date 11.01.2023
 # @copyright Institut fuer Verkehrsforschung,
 #            Deutsches Zentrum fuer Luft- und Raumfahrt
-# @brief generate attraction factors per TAZ
+# @brief generate attraction factors per TAZ and country attributes
 # =========================================================
 
 import numpy as np
@@ -32,9 +32,10 @@ class AttractionIndex:
         self.taz_id = taz_id
         self.industry_ = gpd.GeoDataFrame()
 
-    def population(self, pop_nodes, pop_val="VALUE"):
+    def population_from_point(self, pop_nodes, pop_val="VALUE"):
         """
         Aggregate population per TAZ based on point layer with population density
+
         @param pop_nodes: GeoDataFrame with population density (points)
         @param pop_val: str; name of column with population density in pop_nodes
         @return: self.taz as GeoDataFrame is updated with total population per cell
@@ -49,8 +50,9 @@ class AttractionIndex:
 
     def get_industry(self, taz_cn="cntr_code", inplace=None):
         """
-        Extract industrial sites per TAZ from OSM with landuse=industrial
+        Extract industrial sites (polygons) per TAZ from OSM with landuse=industrial
 
+        @param taz_cn: str, column name with country in self.taz
         @param inplace: return GeoDataFrame; if True, GeoDataFrame is not returned
         @return: GeoDataFrame with industry area polygons
         """
@@ -75,25 +77,39 @@ class AttractionIndex:
 
         self.industry_.set_geometry('geometry', crs=ind_crs, inplace=True)
 
+        if not inplace:
+            return self.industry_
+
         print(". . . Finished extracting OSM industrial sites {}".format(datetime.now()))
 
-    def industry_attributes(self):
+    def industry_attributes(self, industry_gdf=None):
         """
-        Aggregate total area and count of industrial sites per TAZ based on OSM data with landuse=industrial
+        Aggregate total area and count of industrial sites per TAZ based on GDF with industrial areas
+
+        @param industry_gdf: GeoDataFrame with industry areas (Polygons); if None, self.industry_ is used
         @return: self.taz as GeoDataFrame is updated with industrial area data per cell
         """
-        industry = self.industry_.reset_index
-        # get area in m2 per polygon
+        if industry_gdf is None:
+            industry = self.industry_.reset_index()
+        elif type(industry_gdf) == gpd.GeoDataFrame:
+            industry = industry_gdf
+            industry['id'] = list(range(len(industry)))
+        else:
+            print('Wrong input type for industry_gdf {}'.format(str(type(industry_gdf))))
+            industry = None
+
+        # get area in km2 per polygon
         industry.to_crs(epsg=3035, inplace=True)
-        industry['area'] = industry.area
+        industry['area_ind'] = industry.area / 1000**2
         industry.to_crs(epsg=4326, inplace=True)
-        industry = industry[['id', 'area', 'geometry']]
+        industry = industry[['id', 'area_ind', 'geometry']]
+        industry.rename(columns={'id': 'id_ind'}, inplace=True)
         # aggregate industrial area per TAZ, number of industrial areas per TAZ
         taz_industry = gpd.overlay(industry, self.taz)
-        taz_ind_area = taz_industry.groupby(self.taz_id)['area'].sum().reset_index()
-        taz_ind_area.rename(columns={'area': 'ind_area_sum'})
-        taz_ind_count = taz_industry.groupby(self.taz_id)['id'].aggregate('count').reset_index()
-        taz_ind_count.rename(columns={'id': 'ind_area_count'})
+        taz_ind_area = taz_industry.groupby(self.taz_id)['area_ind'].sum().reset_index()
+        taz_ind_area.rename(columns={'area_ind': 'ind_area_sum'}, inplace=True)
+        taz_ind_count = taz_industry.groupby(self.taz_id)['id_ind'].aggregate('count').reset_index()
+        taz_ind_count.rename(columns={'id_ind': 'ind_area_count'}, inplace=True)
         taz_industry = pd.merge(taz_ind_area, taz_ind_count, on=self.taz_id)
         self.taz = self.taz.merge(taz_industry, how='left', on=self.taz_id)
 
@@ -107,15 +123,15 @@ class AttractionIndex:
         """
         # set scope
         if scope is None:
-            taz_scope = self.taz.copy
+            taz_scope = self.taz.copy()
             index_type = "index_int"
         else:
-            taz_scope = self.taz[self.taz[taz_cn] == scope]
+            taz_scope = self.taz[self.taz[taz_cn] == scope].copy()
             index_type = "index_nat"
 
         # columns of final geo data frame
-        cols_taz = self.taz.columns
-        cols_taz.extend(index_type)
+        cols_taz = list(self.taz.columns)
+        cols_taz.append(index_type)
 
         # normalize pop, industrial area to all taz
         taz_scope['pop_n'] = taz_scope['population'] / np.nanmean(taz_scope['population'])
