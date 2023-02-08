@@ -143,4 +143,4 @@ class Matrix:
               '({} min)'.format(str(round(float(time.time() - time1) / 60, 2))))
         print(datetime.now())
 
-        return mx_z
+        return mx_z, zones_df
