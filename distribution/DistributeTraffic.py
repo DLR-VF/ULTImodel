@@ -11,6 +11,11 @@
 import pandas as pd
 import numpy as np
 
+import generationData.Matrices as Matrices
+import networkx as nx
+import itertools
+import osmnx as ox
+
 
 def pt_shares_int(a, b):
     """
@@ -30,7 +35,7 @@ def pt_shares_int(a, b):
     return {'pt_share_foreign': x1, 'pt_share_transit': x2, 'pt_ratio_int': x3}
 
 
-def get_trip_matrix(mx_grav, taz, goal_col):
+def get_trip_matrix(mx_grav, taz, goal_col, taz_id='id'):
     """
     Get trip matrix based on total trips per taz and gravity model matrix
 
@@ -41,8 +46,8 @@ def get_trip_matrix(mx_grav, taz, goal_col):
     """
     # choice probabilities and trips
     mx_trips = np.zeros(mx_grav.shape)
-    for t in taz['id']:
-        goal = float(taz.loc[taz['id'] == t, goal_col])
+    for t in taz[taz_id]:
+        goal = float(taz.loc[taz[taz_id] == t, goal_col])
         # get probabilities for trips starting at t
         prob_a = mx_grav[t, :] / mx_grav[t, :].sum()
         prob_b = mx_grav[:, t] / mx_grav[:, t].sum()
@@ -51,6 +56,94 @@ def get_trip_matrix(mx_grav, taz, goal_col):
     # fill NA
     mx_trips[np.isnan(mx_trips)] = 0
     return mx_trips
+
+
+def assignment_single(net_g, net, o, d, weight, trips, from_='from_node', to_='to_node'):
+    """
+    Performs a shortest path network assignment between two nodes on a MultiDiGraph based on a specified weight and returns a GeoDataFrame with the resulting network load
+    @param net_g: MultiDiGraph with network
+    @param net: gpd.GeoDataFrame with network
+    @param o: int, ID of origin node
+    @param d: int, ID of destination node
+    @param weight: str, name of weight attribute; is an attribute of links in net and net_g, e.g. travel time or length
+    @param trips: float, number of vehicle trips to distribute between o and d
+    @param from_: str, name of from node attribute in net, defaults to 'from_node'
+    @param to_: str, name of to node attribute in net, defaults to 'to_node'
+    @return: GeoDataFrame of net with trips on the links, on the path between o and d
+    """
+    path_nodes = ox.distance.shortest_path(net_g, o, d, weight=weight)  # tt or length
+    nodes_tuples = [(path_nodes[x], path_nodes[x + 1]) for x in range(len(path_nodes) - 1)]
+    nodes_tuples = pd.DataFrame(nodes_tuples, columns=[from_, to_])
+    nodes_tuples['__tmp'] = trips
+    # add trips to network links between nodes tuples
+    net_tmp = net.merge(nodes_tuples, on=[from_, to_], how='left')
+    net_tmp.loc[net_tmp['__tmp'].isna(), '__tmp'] = 0
+    return net_tmp
+
+
+def assignment_multiple(net_g, net, o, d, k, weight, trips, from_='from_node', to_='to_node', id_='link_id'):
+    """
+    Performs a shortest path assignment for the k shortest paths between two nodes on a MultiDiGraph based on a specified weight and returns a GeoDataFrame with the resulting network load
+    Paths are weighted based on the total weight per path
+    @param net_g: MultiDiGraph with network
+    @param net: gpd.GeoDataFrame with network
+    @param o: int, ID of origin node
+    @param d: int, ID of destination node
+    @param k: int, number of paths to find
+    @param weight: str, name of weight attribute; is an attribute of links in net and net_g, e.g. travel time or length
+    @param trips: float, number of vehicle trips to distribute between o and d
+    @param from_: str, name of from node attribute in net, defaults to 'from_node'
+    @param to_: str, name of to node attribute in net, defaults to 'to_node'
+    @param id_: str, name of id attribute in net, defaults to 'link_id'
+    @return: GeoDataFrame of net with trips on the links, on the path between o and d
+    """
+    # transform to digraph for nx.shortest_simple_path function
+    dg = nx.DiGraph(net_g)
+    k_paths = nx.shortest_simple_paths(dg, o, d, weight)
+    net_tmp = net[[from_, to_, id_, weight]].copy()
+    net_tmp['__weight_all'] = 0
+    weights = []
+    for path_nodes in itertools.islice(k_paths, 0, k):
+        nodes_tuples = [(path_nodes[x], path_nodes[x + 1]) for x in range(len(path_nodes) - 1)]
+        nodes_tuples = pd.DataFrame(nodes_tuples, columns=[from_, to_])
+        # merge net_tmp, aggregate weight (tt or length) for current path
+        nodes_tuples = nodes_tuples.merge(net[[from_, to_, weight]], on=[from_, to_], how='left')
+        weight_ = 1 / nodes_tuples[weight].sum()
+        nodes_tuples['__weight'] = weight_
+        weights.append(weight_)
+        # merge weight to net_tmp and add to weight_all
+        net_tmp = net_tmp.merge(nodes_tuples[[from_, to_, '__weight']], on=[from_, to_], how='left')
+        net_tmp.loc[net_tmp['__weight'].isna(), '__weight'] = 0
+        net_tmp['__weight_all'] += net_tmp['__weight']
+        net_tmp.drop(columns=['__weight'], inplace=True)
+    k_paths.close()
+    net_tmp['__weight_all'] /= sum(weights)
+    net_tmp['__tmp'] = net_tmp['__weight_all'] * trips
+    return net_tmp
+
+
+def create_network_graph(net_, nodes_, node_id='node_id', node_geo='geometry', net_from='from_node', net_to='to_node', net_id='link_id'):
+    """
+    Transform a GeoDataFrame of a network and the corresponding nodes to a MultiDiGraph
+    Needs columns for node id in nodes, from node, to node and link id in network
+    @param net_: gpd.GeoDataFrame with network
+    @param nodes_: gpd.GeoDataFrame with nodes
+    @param node_id: str, name of id column in nodes_, defaults to 'node_id'
+    @param node_geo: str, name of geometry column in nodes_, defaults to 'geometry'
+    @param net_from: str, name of from node column in net_, defaults to 'from_node'
+    @param net_to: str, name of to node column in net_, defaults to 'to_node'
+    @param net_id: str, name of id column in net_, defaults to 'link_id'
+    @return: MultiDiGraph of net_
+    """
+    nodes_.set_index(node_id, inplace=True)
+    nodes_['x'] = nodes_[node_geo].x
+    nodes_['y'] = nodes_[node_geo].y
+    net_.set_index([net_from, net_to, net_id], inplace=True)
+
+    net_g = ox.utils_graph.graph_from_gdfs(nodes_, net_)
+    net_g = ox.utils_graph.get_largest_component(net_g)
+
+    return net_g
 
 
 class TargetValues:
@@ -109,6 +202,8 @@ class TargetValues:
             shares_tkm = {'lcv': 0.08, 'mft': 0.09, 'hft': 0.83}
         if loads_t is None:
             loads_t = {'lcv': 0.5, 'mft': 3, 'hft': 10}
+        if segments is None:
+            segments = shares_tkm.keys()
 
         # check if segments, loads and shares match
         if (sorted(segments) == sorted(shares_tkm.keys())) & (sorted(segments) == sorted(loads_t.keys())):
@@ -255,7 +350,7 @@ class GravityModel:
         else:
             taz = self.taz
             mtx = self.matrix_international()
-            mtx[mtx==9.e+12] = 0
+            #mtx[mtx==9.e+12] = 0
         # trip generation
         taz['pt_goal'] = taz[taz_pop] * mob_rate
 
@@ -271,7 +366,7 @@ class GravityModel:
         np.fill_diagonal(mx_grav, 0)
         mx_grav[np.isnan(mx_grav)] = 0
         # choice probabilities and trips
-        mx_trips = get_trip_matrix(mx_grav, taz, 'pt_goal')
+        mx_trips = get_trip_matrix(mx_grav, taz, 'pt_goal', taz_id='id')
         # scaling to match target
         vkt = (mx_trips*mtx[:, :, 1]).sum()/unit_dis
         scale_fac = target / vkt
@@ -292,14 +387,18 @@ class GravityModel:
         @param trips_key: str, key for segment if cn is None target_trips is dict
         @return: np.array with OD trip matrix
         """
-        # TODO: add check for target_trips (dict in correct form or value, depending on cn)
+        t_targ = type(target_trips)
         if cn is not None:
             taz, mtx = self.get_country_model(cn=cn)
             index_col = 'index_nat'
+            if (t_targ != float) & (t_targ != int):
+                raise ValueError('target_trips has to be float / int if cn is not None, is {}'.format(t_targ))
         else:
             taz = self.taz
             mtx = self.matrix_international()
             index_col = 'index_int'
+            if t_targ != dict:
+                raise ValueError('target_trips has to be dict if cn is None, is {}'.format(t_targ))
         if unit_dis == 1000:
             # assure distance matrix is in km
             mtx[:, :, 1] /= 1000
@@ -327,7 +426,7 @@ class GravityModel:
         mx_grav[np.isnan(mx_grav)] = 0
 
         # get trips
-        mx_trips = get_trip_matrix(mx_grav, taz, 'ft_goal')
+        mx_trips = get_trip_matrix(mx_grav, taz, 'ft_goal', taz_id='id')
 
         if target_vkt is not None:
             # determine relation to target
@@ -343,19 +442,26 @@ class IntraZonal:
     Distribute intrazonal trips on road network
     """
 
-    def __init__(self, taz, net):
+    def __init__(self, taz, net, from_node='from_node', to_node='to_node', link_id='ultimo_id'):
         """
 
         @param taz: gpd.GeoDataFrame or pd.DataFrame with TAZ
         @param net: gpd.GeoDataFrame or pd.DataFrame with road network
+        @param from_node: str, column name for from node in net, default 'from_node'
+        @param to_node: str, column name for to node in net, default 'to_node'
+        @param link_id: str, column name for unique id of the elements in net, default 'ultimo_id'
         """
         self.taz = taz
         self.net = net
+        self.from_ = from_node
+        self.to_ = to_node
+        self.link_id = link_id
 
     def road_type_weighted_single(self, target, weights=None, veh_types=None, taz_id='nuts_id',
-                                  index='population', sub_len='length', net_type='type', urban=False):
+                                  index='population', sub_len='length', net_type='type'):
         """
         Distribute total VKT per TAZ and assign loads to roads within this TAZ, weighted by road type
+
         @param target: dict, target values for total VKT per vehicle type in the form of {veh_type: target_vkt}
         @param weights: None or pd.DataFrame, weights of different road types; default None leads to pd.DataFrame({net_type: [0, 1, 2, 3], 'weight': [0.75, 1.5, 3.5, 3.5]})
         @param veh_types: None or list, names of vehicle types to be considered; default None leads to ['car']
@@ -363,7 +469,6 @@ class IntraZonal:
         @param index: str, name of column with attraction index to be used for trip generation in self.taz, defaults to 'population'
         @param sub_len: str, name of column with length of subordinate network in self.taz, defaults to 'length'
         @param net_type: str, name of column with road type in self.net, defaults to 'type'
-        @param urban: not applicable yet (bool, if True, additional weight is placed on roads based on their location within or outside of urban areas, default False)
         @return: gpd.GeoDataFrame or pd.DataFrame for network with traffic loads, taz with subordinate network VKT
         """
         if weights is None:
@@ -384,10 +489,6 @@ class IntraZonal:
         net = self.net.merge(weights, on=net_type, how='left')
         net.loc[net['weight'].isna(), 'weight'] = 0
         net['weighted_length'] = net['length']*net['weight']
-
-        # todo: adjust urban weights
-        if urban:
-            net.loc[net['urban']==1, 'weighted_length'] = net.loc[net['urban']==1, 'weighted_length']*0.5
 
         w_len_per_type = net.groupby([taz_id, net_type])['weighted_length'].sum().reset_index()
         w_len_per_type = pd.concat([w_len_per_type, sub[[taz_id, net_type, 'weighted_length']]])
@@ -432,10 +533,11 @@ class IntraZonal:
         return net, taz_result
 
     def road_type_weighted_multiple(self, target, matrix_dis, veh_types=None, weights=None, taz_id='nuts_id', taz_mx_id='id',
-                                    index='index_nat', sub_len='length', net_type='type', urban=None, distance=55, cell_size=500,
+                                    index='index_nat', sub_len='length', net_type='type', distance=55, cell_size=500,
                                     fac_cell=1.5):
         """
         Distribute total VKT per TAZ and assign loads to roads within this TAZ and surrounding TAZ, weighted by road type
+
         @param target: dict, target values for total VKT per vehicle type in the form of {veh_type: target_vkt}
         @param matrix_dis: np.array, distance matrix between TAZ (in km)
         @param veh_types: None or list, names of vehicle types to be considered; default None leads to ['lcv', 'mft', 'hft']
@@ -445,7 +547,6 @@ class IntraZonal:
         @param index: str, name of column with attraction index to be used for trip generation in self.taz, defaults to 'index_nat'
         @param sub_len: str, name of column with length of subordinate network in self.taz, defaults to 'length'
         @param net_type: str, name of column with road type in self.net, defaults to 'type'
-        @param urban: not applicable yet (bool, if True, additional weight is placed on roads based on their location within or outside of urban areas, default False)
         @param distance: float, max distance between TAZ to be included in km, defaults to 55km
         @param cell_size: float, max cell size of TAZ to force inclusion of surrounding TAZ, defaults to 500km²
         @param fac_cell: float, factor to apply to main TAZ during distribution, defaults to 1.5
@@ -470,10 +571,6 @@ class IntraZonal:
         net.loc[net['weight'].isna(), 'weight'] = 0
         net['weighted_length'] = net['length'] * net['weight']
         taz_2['weighted_sub'] = taz_2[sub_len]*float(weights.loc[weights[net_type]==0, 'weight'])
-
-        # todo: adjust urban weights
-        if urban:
-            net.loc[net['urban']==1, 'weighted_length'] = net.loc[net['urban']==1, 'weighted_length']*0.5
 
         # iterate over taz
         for t in taz_2[taz_id]:
@@ -516,8 +613,131 @@ class IntraZonal:
 
         return net, taz_2
 
+    def od_assignment_single(self, target, connectors, nodes, share_sub, av_distance, assignment_weight, att_factors, k=1,
+                             pt_vehtype=None, taz_id='nuts_id', sub_len='length', conn_geo='geometry', conn_weight='weight',
+                             node_id='node_id', node_geo='geometry', alpha=0.5, beta=0.00421, gamma=-2.75):
+        """
+        Calculate OD-matrices between connector points within a TAZ and perform a shortest path network assignment based on a weight column in self.net;
+        Determine share of subordinate network VKT per TAZ
 
+        !! Conditions:
+        !! Connector GDF has columns with corresponding TAZ and network node, weight
+        !! The column names for taz id and node id are variables, but currently have to  be identical in all GDFs
 
+        @param target: dict with target value for VKT per vehicle type; in the form of {'car':1.2e+6, 'truck':1.3e+5}
+        @param connectors: gpd.GeoDataFrame with connector nodes; should include information on corresponding TAZ and network node
+        @param nodes: gpd.GeoDataFrame with network nodes, needed for creating a graph for routing
+        @param share_sub: dict with share of subordinate road network VKT per vehicle type; in the form of {'car':0.33, 'truck':0.1}
+        @param av_distance: dict with average distance for short-distance trips per vehicle type in km; in the form of {'car':30.3, 'truck':40.5}
+        @param assignment_weight: dict with name of weight for assignment per vehicle type, corresponds to column in self.net; in the form of {'car':'time', 'truck':'length'}
+        @param att_factors: dict with name of attraction factor per vehicle type, corresponds to column in self.taz; in the form of {'car':'population', 'truck':'index'}
+        @param k: int, number of routes to find between connector points; defaults to 1
+        @param pt_vehtype: list, name of vehicle types for personal transport (different gravity models for personal and freight transport), default None translates to ['car']
+        @param taz_id: str, column name with taz id in self.taz and in connectors
+        @param sub_len: str, column name with subordinate network length in self.taz, defaults to 'length'
+        @param conn_geo: str, column name with geometry in connectors, defaults to 'geometry'
+        @param conn_weight: str, column name with weight in connectors, defaults to 'weight'
+        @param node_id: str, column name with node id in connectors and nodes, defaults to 'node_id'
+        @param node_geo: str, column name with geometry in nodes, defaults to 'geometry'
+        @param alpha: float, alpha parameter for personal transport gravity model mx_grav[o, d] = (w_o * w_d) ** alpha * mx[o, d, 0] ** gamma
+        @param beta: float, beta parameter for freight transport gravity model mx_grav[o, d] = w_o * w_d * np.exp(-beta * mx[o, d, 1])
+        @param gamma: float, gamma parameter for personal transport gravity model mx_grav[o, d] = (w_o * w_d) ** alpha * mx[o, d, 0] ** gamma
+        @return: gpd.GeoDataFrames with network and taz including short distance loads and VKT
+        """
+
+        # check that targets, share_sub, av_distance, index and assignment_weight all have values for the same veh_types
+        veh_types = list(target.keys())
+        if (sorted(veh_types) != sorted(share_sub.keys())) | (sorted(veh_types) != sorted(av_distance.keys())) | (
+                sorted(veh_types) != sorted(assignment_weight.keys())) | (sorted(veh_types) != sorted(att_factors.keys())):
+            raise KeyError('Vehicle types in target, share_sub, av_distance and assignment_weight do not match!'
+                           '\ntarget            {}\nshare_sub         {}\nav_distance       {}\nassignment_weight {}'.format(
+                veh_types, share_sub.keys(), av_distance.keys(), assignment_weight.keys()))
+
+        if pt_vehtype is None:
+            pt_vehtype = ['car']
+
+        # target per taz
+        taz_cols = [x for x in set([att_factors[i] for i in att_factors])]
+        taz_cols.extend([taz_id, sub_len])
+        taz_2 = self.taz[taz_cols].copy()
+        net_short = self.net.copy()
+        # target per vehicle type, determine subordinate network VKT per type and TAZ
+        for veh_type in veh_types:
+            taz_2[veh_type] = taz_2[att_factors[veh_type]] / taz_2[att_factors[veh_type]].sum() * target[veh_type]
+            # todo: include 'length' attribute / use weights as in previous function
+            taz_2['{}_sub'.format(veh_type)] = taz_2[veh_type] * share_sub[veh_type]
+            net_short['{}_short'.format(veh_type)] = 0
+
+        conn_result = pd.DataFrame(columns=connectors.columns.tolist()+['ix'])
+        # create routable MultiDiGraph from net and nodes
+        net_graph = create_network_graph(self.net.copy(), nodes.copy(), net_from=self.from_, node_id=node_id, node_geo=node_geo, net_to=self.to_, net_id=self.link_id)
+
+        # iterate over taz2
+        for t in taz_2[taz_id]:
+            # get connector points
+            conn_t = connectors[connectors[taz_id] == t]
+            # get cost matrix between connector points in t
+            m = Matrices.Matrix(conn_t, zone_col=taz_id, conn_geo=conn_geo)
+            m.osrm_request_nodes()
+            mx = m.all_mtx
+            mx[:, :, 0] /= 60
+            mx[:, :, 1] /= 1000
+            # OD-matrix and assignment per veh_type
+            conn_t['ix'] = list(range(len(conn_t)))
+            # add conn_t to conn_results to save ix
+            conn_result = pd.concat([conn_result, conn_t])
+            for i, veh_type in enumerate(veh_types):
+                weight = assignment_weight[veh_type]
+                # total trips
+                trips = (float(taz_2.loc[taz_2[taz_id] == t, veh_type])-float(taz_2.loc[taz_2[taz_id] == t, '{}_sub'.format(veh_type)]))/av_distance[veh_type]
+                # trip generation per point
+                conn_t['goal_{}'.format(veh_type)] = conn_t[conn_weight]/conn_t[conn_weight].sum() * trips
+                # trip distribution
+                # gravity model: gravity values
+                mx_grav = np.zeros((len(conn_t), len(conn_t)))
+                for o in conn_t['ix']:
+                    w_o = float(conn_t.loc[conn_t['ix'] == o, conn_weight])
+                    for d in conn_t['ix']:
+                        w_d = float(conn_t.loc[conn_t['ix'] == d, conn_weight])
+                        if veh_type.isin(pt_vehtype):
+                            mx_grav[o, d] = (w_o * w_d) ** alpha * mx[o, d, 0] ** gamma
+                        else:
+                            mx_grav[o, d] = w_o * w_d * np.exp(-beta * mx[o, d, 1])
+                # fill diagonal (no trips) and NaN
+                np.fill_diagonal(mx_grav, 0)
+                mx_grav[np.isnan(mx_grav)] = 0
+                # choice probabilities and trips
+                mx_trips = get_trip_matrix(mx_grav, conn_t, 'goal_{}'.format(veh_type), taz_id='ix')
+                # assignment
+                for o_i in range(mx_trips.shape[0]):
+                    # get node_id of o_i
+                    o = int(conn_t.loc[conn_t['ix'] == o_i, node_id])
+                    # print(o)
+                    for d_i in range(mx_trips.shape[1]):
+                        if o_i != d_i:
+                            # get node_id of d_i
+                            d = int(conn_t.loc[conn_t['ix'] == d_i, node_id])
+                            trips = mx_trips[o_i, d_i]
+                            # assignment shortest path
+                            if k == 1:
+                                net_tmp = assignment_single(net_graph, self.net, o, d, weight, trips, from_=self.from_, to_=self.to_)
+                            elif k > 1:
+                                net_tmp = assignment_multiple(net_graph, self.net, o, d, k, weight, trips, from_=self.from_, to_=self.to_, id_=self.link_id)
+                            else:
+                                raise ValueError('k has to be positive int, minimum 1, is {}'.format(k))
+                            # merge to net
+                            net_short = net_short.merge(net_tmp[[self.from_, self.to_, self.link_id, '__tmp']], on=[self.from_, self.to_, self.link_id], how='left')
+                            net_short.loc[net_short['__tmp'].isna(), '__tmp'] = 0
+                            net_short = net_short.drop_duplicates()
+                            net_short['{}_short'.format(veh_type)] += net_short['__tmp']
+                            net_short.drop(columns=['__tmp'], inplace=True)
+
+                # scaling to match target
+                vkt = (net_short['{}_short'.format(veh_type)]*net_short['length']).sum()
+                scale_fac = (float(taz_2.loc[taz_2[taz_id] == t, veh_type])-float(taz_2.loc[taz_2[taz_id] == t, '{}_sub'.format(veh_type)])) / vkt
+                print('Scaling factor for {}-{}: {}'.format(t,veh_type, scale_fac))
+                net_short['{}_short'.format(veh_type)] *= scale_fac
+        return net_short, taz_2
 
 
 
