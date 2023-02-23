@@ -614,7 +614,7 @@ class IntraZonal:
         return net, taz_2
 
     def od_assignment_single(self, target, connectors, nodes, share_sub, av_distance, assignment_weight, att_factors, k=1,
-                             pt_vehtype=None, taz_id='nuts_id', sub_len='length', conn_geo='geometry', conn_weight='weight',
+                             pt_vehtype=None, taz_id='nuts_id', sub_len='length', conn_id='con_id', conn_geo='geometry', conn_weight='weight',
                              node_id='node_id', node_geo='geometry', alpha=0.5, beta=0.00421, gamma=-2.75):
         """
         Calculate OD-matrices between connector points within a TAZ and perform a shortest path network assignment based on a weight column in self.net;
@@ -635,6 +635,7 @@ class IntraZonal:
         @param pt_vehtype: list, name of vehicle types for personal transport (different gravity models for personal and freight transport), default None translates to ['car']
         @param taz_id: str, column name with taz id in self.taz and in connectors
         @param sub_len: str, column name with subordinate network length in self.taz, defaults to 'length'
+        @param conn_id: str, column name with connector id in connectors, defaults to 'con_id'
         @param conn_geo: str, column name with geometry in connectors, defaults to 'geometry'
         @param conn_weight: str, column name with weight in connectors, defaults to 'weight'
         @param node_id: str, column name with node id in connectors and nodes, defaults to 'node_id'
@@ -675,9 +676,9 @@ class IntraZonal:
         # iterate over taz2
         for t in taz_2[taz_id]:
             # get connector points
-            conn_t = connectors[connectors[taz_id] == t]
+            conn_t = connectors[connectors[taz_id] == t].copy()
             # get cost matrix between connector points in t
-            m = Matrices.Matrix(conn_t, zone_col=taz_id, conn_geo=conn_geo)
+            m = Matrices.Matrix(conn_t, zone_col=taz_id, conn_geo=conn_geo, id_col=conn_id)
             m.osrm_request_nodes()
             mx = m.all_mtx
             mx[:, :, 0] /= 60
@@ -699,8 +700,11 @@ class IntraZonal:
                     w_o = float(conn_t.loc[conn_t['ix'] == o, conn_weight])
                     for d in conn_t['ix']:
                         w_d = float(conn_t.loc[conn_t['ix'] == d, conn_weight])
-                        if veh_type.isin(pt_vehtype):
-                            mx_grav[o, d] = (w_o * w_d) ** alpha * mx[o, d, 0] ** gamma
+                        if veh_type in pt_vehtype:
+                            tt = mx[o, d, 0]
+                            if tt == 0:
+                                tt += 0.5 # default 30 min
+                            mx_grav[o, d] = (w_o * w_d) ** alpha * tt ** gamma
                         else:
                             mx_grav[o, d] = w_o * w_d * np.exp(-beta * mx[o, d, 1])
                 # fill diagonal (no trips) and NaN
@@ -720,9 +724,21 @@ class IntraZonal:
                             trips = mx_trips[o_i, d_i]
                             # assignment shortest path
                             if k == 1:
-                                net_tmp = assignment_single(net_graph, self.net, o, d, weight, trips, from_=self.from_, to_=self.to_)
+                                try:
+                                    net_tmp = assignment_single(net_graph, self.net.copy(), o, d, weight, trips, from_=self.from_, to_=self.to_)
+                                except:
+                                    print('now path for {}-{} in {}'.format(o, d, t))
+                                    # missing trips will be adjusted for with scaling
+                                    net_tmp = self.net.copy()
+                                    net_tmp['__tmp'] = 0
                             elif k > 1:
-                                net_tmp = assignment_multiple(net_graph, self.net, o, d, k, weight, trips, from_=self.from_, to_=self.to_, id_=self.link_id)
+                                try:
+                                    net_tmp = assignment_multiple(net_graph, self.net, o, d, k, weight, trips, from_=self.from_, to_=self.to_, id_=self.link_id)
+                                except:
+                                    print('now path for {}-{} in {}'.format(o, d, t))
+                                    # missing trips will be adjusted for with scaling
+                                    net_tmp = self.net.copy()
+                                    net_tmp['__tmp'] = 0
                             else:
                                 raise ValueError('k has to be positive int, minimum 1, is {}'.format(k))
                             # merge to net
@@ -735,7 +751,7 @@ class IntraZonal:
                 # scaling to match target
                 vkt = (net_short['{}_short'.format(veh_type)]*net_short['length']).sum()
                 scale_fac = (float(taz_2.loc[taz_2[taz_id] == t, veh_type])-float(taz_2.loc[taz_2[taz_id] == t, '{}_sub'.format(veh_type)])) / vkt
-                print('Scaling factor for {}-{}: {}'.format(t,veh_type, scale_fac))
+                print('Scaling factor for {}-{}: {}'.format(t, veh_type, scale_fac))
                 net_short['{}_short'.format(veh_type)] *= scale_fac
         return net_short, taz_2
 

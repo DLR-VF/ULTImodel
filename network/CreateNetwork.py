@@ -332,7 +332,7 @@ class Connectors:
         self.connectors['c_n'] = self.connectors.reset_index().index
 
     def identify_connector_nodes(self, nodes, node_no="node_id", node_geom="geom", zone="nuts_id",
-                                 weight="weight"):
+                                 weight="weight", country_check=False):
         """
         Move connector locations to network nodes
 
@@ -348,7 +348,7 @@ class Connectors:
 
         # find one node per connector location
         distances = ckdnearest(con, nodes, 'c_n', node_no, 1)
-        output = con[[zone, weight]].merge(distances, left_index=True, right_index=True)
+        output = con[[zone, 'c_n', weight]].merge(distances, on='c_n')
         output.rename(columns={'{}_near'.format(node_no): node_no}, inplace=True)
 
         # check for duplicates
@@ -372,9 +372,28 @@ class Connectors:
         else:
             print('No duplicates detected!')
 
+        # check if connector nodes are within the same country
+        if country_check:
+            output['cn_connode'] = output[zone].str[:2]
+            move_cons = nodes[[node_no, country_check]].merge(output[[node_no, 'c_n', 'cn_connode']], on=node_no, how="right")
+            move_cons = move_cons.loc[move_cons['cn_connode'] != move_cons[country_check]]
+            move_cons = move_cons.merge(self.connectors[['c_n', 'geometry']], on='c_n', how='left')
+            move_cons = move_cons.set_geometry('geometry')
+            move_cons.crs = 4326
+            move_cons.drop(columns=[node_no, country_check], inplace=True)
+            # move connector nodes in move_cons
+            print('Move {} connectors from foreign nodes...'.format(len(move_cons)))
+            for c in move_cons['cn_connode'].unique():
+                nodes_c = nodes[nodes[country_check]==c]
+                dist_c = ckdnearest(move_cons[move_cons['cn_connode']==c], nodes_c, 'c_n', node_no, 1)
+                dist_c.rename(columns={'{}_near'.format(node_no): node_no}, inplace=True)
+                # replace node_no in output
+                output.loc[output['c_n'].isin(dist_c['c_n']), node_no] = dist_c[node_no].tolist()
+            output.drop(columns=['cn_connode'], inplace=True)
+
         # create GDF with correct connector nodes
         connodes = nodes[[node_no, node_geom]].merge(output[[node_no, zone, 'c_n', weight]], on=node_no, how="right")
-        connodes.set_geometry('geom', inplace=True)
+        connodes.set_geometry(node_geom, inplace=True)
 
         return connodes
 
