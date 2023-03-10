@@ -3,6 +3,7 @@ site_url: https://example.com/
 site_description: Distribute road-based transport using open data
 site_author: Nina Thomsen
 docs_dir: ./docs
+repo_url: https://gitlab.dlr.de/ultimo/ultimo-python
 
 theme:
     name: readthedocs
@@ -14,23 +15,20 @@ theme:
 
 nav:
     - Home: index.md
-    - Installation: install.md
-    - Usage:
-        - Command Line: cmd.md
-        - Embedded: embed.md
-    - Links: links.md
-    - API: api.md
+    - TODO Installation: install.md
+    - Usage: use.md
+    - Examples: example.md
+    - API:
+        - ultimo.network: api-network.md
+        - ultimo.generationData: api-gd.md
+        - ultimo.distribution: api-dis.md
+    - Distribution:
+        - ChangeLog: changes.md
+        - TODO License (BSD): license.md
+        - TODO Legal: legal.md
     - Developer Docs:
-        - Notes: notes.md
-        - How To Release: release.md
-    - ChangeLog: changes.md
-    - License (BSD): license.md
-    - Legal: legal.md
-    - Appendices:
-        - AppendixA: appendixA.md
-        - AppendixB: appendixB.md
-        - AppendixC: appendixC.md
-        - AppendixD: appendixD.md
+        - TODO Notes: notes.md
+        - TODO How To Release: release.md
 
 markdown_extensions:
     - admonition
@@ -39,4 +37,15 @@ markdown_extensions:
 copyright: "&copy; Copyright 2020&ndash;2023 DLR."
 
 use_directory_urls: false
+
+plugins:
+    - search
+    - mkdocstrings:
+        handlers:
+            python:
+                paths: [..]
+                options:
+                    filters: [""]
+                    show_source: False
+                    docstring_style: "sphinx"
 
