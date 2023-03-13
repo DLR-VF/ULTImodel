@@ -92,6 +92,7 @@ class Edges:
     def __init__(self, country, taz, taz_cn="country", taz_geo="geometry"):
         """
 
+<<<<<<< network/CreateNetwork.py
         @param country: code or name of country
         @param taz: GeoDataFrame including the TAZ
         @param taz_geo: Name of geometry column in TAZ layer, default "geometry
@@ -100,6 +101,7 @@ class Edges:
         @type taz_cn: str
         @type taz: gpd.GeoDataFrame
         @type country: str
+>>>>>>> network/CreateNetwork.py
         """
         self.country = country
         self.edges = gpd.GeoDataFrame()
@@ -165,13 +167,15 @@ class Edges:
         n_poly = 0  # number of polygons with road network
         for i, poly in enumerate(polygons[self.taz_geo][:]):
             try:
+<<<<<<< network/CreateNetwork.py
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
                     warnings.filterwarnings("ignore", category=FutureWarning, append=True)
                     warnings.filterwarnings("ignore", category=UserWarning, append=True)
-                    G = ox.graph_from_polygon(poly, simplify=False, custom_filter=filter_nw)
+                    G = ox.graph_from_polygon(poly, simplify=False, custom_filter=filter_nw, retain_all=True)
                     G = ox.simplify_graph(G)
                     G = ox.simplification.consolidate_intersections(G, tolerance=0.002)
+>>>>>>> network/CreateNetwork.py
                 G = ox.speed.add_edge_speeds(G, fallback=50, precision=0)
                 edges = gpd.GeoDataFrame([x[2] for x in G.edges.data()])[["highway", "speed_kph", "geometry"]]
                 if i == 0:
