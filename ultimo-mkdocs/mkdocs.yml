@@ -1,0 +1,51 @@
+site_name: ULTIMO - Universal Transport Distribution Model
+site_url: https://example.com/
+site_description: Distribute road-based transport using open data
+site_author: Nina Thomsen
+docs_dir: ./docs
+repo_url: https://gitlab.dlr.de/ultimo/ultimo-python
+
+theme:
+    name: readthedocs
+    highlightjs: true
+    hljs_languages:
+        - yaml
+    palette:
+        primary: light green
+
+nav:
+    - Home: index.md
+    - TODO Installation: install.md
+    - Usage: use.md
+    - Examples: example.md
+    - API:
+        - ultimo.network: api-network.md
+        - ultimo.generationData: api-gd.md
+        - ultimo.distribution: api-dis.md
+    - Distribution:
+        - ChangeLog: changes.md
+        - TODO License (BSD): license.md
+        - TODO Legal: legal.md
+    - Developer Docs:
+        - TODO Notes: notes.md
+        - TODO How To Release: release.md
+
+markdown_extensions:
+    - admonition
+    - sane_lists
+
+copyright: "&copy; Copyright 2020&ndash;2023 DLR."
+
+use_directory_urls: false
+
+plugins:
+    - search
+    - mkdocstrings:
+        handlers:
+            python:
+                paths: [..]
+                options:
+                    filters: [""]
+                    show_source: False
+                    docstring_style: "sphinx"
+

@@ -24,4 +24,8 @@
 
 config.yml
 
+<<<<<<< .gitignore
+.idea/*
+
 cache/**
+>>>>>>> .gitignore
