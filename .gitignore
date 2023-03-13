@@ -3,6 +3,7 @@
 *.RData
 *.Ruserdata
 *.ipynb_checkpoints
+*.idea
 *_files
 *nb.html
 .Rproj.user
@@ -22,3 +23,5 @@
 *.att
 
 config.yml
+
+cache/**

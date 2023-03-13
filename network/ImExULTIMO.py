@@ -20,7 +20,7 @@ class ImportU:
     def __init__(self, _type='local'):
         self.type = _type
 
-    def read_geo_input(self, user="", password="", host="", port=0, dbname="", query="", filename=""):
+    def read_geo_input(self, user="", password="", host="", port=0, dbname="", query="", filename="", geom="geom"):
         """
         :param port: Type postgres - port
         :param dbname: Type postgres - database name
@@ -29,11 +29,12 @@ class ImportU:
         :param user: Type postgres - username
         :param filename: Type local - location of file in directory
         :param query: Type postgres - query for data from postgres
+        :param geom: Type postgres - name of geometry column
         """
         input_ = False
         if self.type == "postgres":
             engine = create_engine('postgresql+psycopg2://{}:{}@{}:{}/{}'.format(user, password, host, port, dbname))
-            input_ = gpd.GeoDataFrame.from_postgis(query, engine, geom_col='geom')
+            input_ = gpd.GeoDataFrame.from_postgis(query, engine, geom_col=geom)
 
         if self.type == "local":
             input_ = gpd.GeoDataFrame.from_file(filename)
