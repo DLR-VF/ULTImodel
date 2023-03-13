@@ -43,6 +43,7 @@ class Edges:
         """
 
         :@param country: str; code or name of country
+        :@type country: str
         :@param taz: GeoDataFrame including the TAZ
         :@param taz_geo: str; Name of geometry column in TAZ layer, default "geometry
         :@param taz_cn: str; Name of column in TAZ layer that defines the country of the TAZ
@@ -106,7 +107,7 @@ class Edges:
         n_poly = 0  # number of polygons with road network
         for i, poly in enumerate(polygons[self.taz_geo][:]):
             try:
-                G = ox.graph_from_polygon(poly, simplify=False, custom_filter=filter_nw)
+                G = ox.graph_from_polygon(poly, simplify=False, custom_filter=filter_nw, retain_all=True)
                 G = ox.simplify_graph(G)
                 G = ox.simplification.consolidate_intersections(G, tolerance=0.002)
                 G = ox.speed.add_edge_speeds(G, fallback=50, precision=0)
