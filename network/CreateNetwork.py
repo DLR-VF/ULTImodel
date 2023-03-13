@@ -276,6 +276,133 @@ class Edges:
         # return DataFrame with nuts_id as index
         return pd.DataFrame(sub_edges.groupby(taz_id)['length'].apply(sum))
 
+    def connect_subgraphs(self, nodes, edges=None, node_id='node_id', node_geo='geometry', edge_id='ultimo_id', edge_from='from_node', edge_to='to_node'):
+        """
+        Ensure that the road network is connected, i.e. each node is connected to each other. If there are multiple subgraphs,
+        connect the larger subgraphs and remove singular edges.
+
+        @param nodes:
+        @param edges:
+        @param node_id:
+        @param node_geo:
+        @param edge_id:
+        @param edge_from:
+        @param edge_to:
+        @return:
+        """
+        if edges is None:
+            edges = self.edges
+
+        # get undirected graph
+        _graph = graph_from_gdf(nodes, edges, node_id=node_id, node_geo=node_geo, edge_id=edge_id, edge_from=edge_from, edge_to=edge_to)
+        _graph_u = ox.utils_graph.get_undirected(_graph)
+
+        # get subgraphs
+        SG = [[_graph_u.subgraph(c).copy(), len(c)] for c in sorted(nx.connected_components(_graph_u), key=len, reverse=False)]
+
+        if len(SG) > 1:
+            print('Connecting {} sub graphs...'.format(len(SG)))
+            # 1 get subgraphs of relevant sizes (more than 5 nodes)
+            S = [s[0] for s in SG if s[1] > 5]
+            S = [[i, s] for i, s in enumerate(S)]
+
+            # 2 get end nodes per graph
+            end_nodes = {}
+            for sg in S:
+                sg_id = sg[0]
+                sg_g = sg[1]
+                # get all nodes in sg
+                n_sg = [e[:-1] for e in sg_g.edges]
+                # get end nodes: all nodes with two or less edges
+                n_sg = np.unique(n_sg, return_counts=True)
+                end_sg = n_sg[0][n_sg[1] <= 2]
+                end_nodes.update({sg_id: end_sg})
+
+            # 3 calculate distances between end nodes
+            for i in range(len(end_nodes))[:-1]:
+                nodes_sg = nodes[nodes[node_id].isin(end_nodes[i])]
+                for ii in range(len(end_nodes))[i + 1:]:
+                    nodes_sg2 = nodes[nodes[node_id].isin(end_nodes[ii])]
+                    # distances between nodes_sg, nodes_sg2
+                    dist_ = ckdnearest(nodes_sg, nodes_sg2, node_id, node_id, 2)
+                    # filter minimal distances
+                    dist_ = dist_.loc[dist_['distance'] < dist_['distance'].min() * 1.3]
+                    # add sg id
+                    dist_['S1'] = i
+                    dist_['S2'] = ii
+                    if (i == 0) & (ii == 1):
+                        dist_all = dist_.copy()
+                    else:
+                        dist_all = pd.concat([dist_all, dist_])
+
+            # 4 connect closest end nodes
+            # get min distance per SG
+            min_dis_per_sg1 = dist_all.groupby('S1')['distance'].min().reset_index().rename(columns={'S1': 'S'})
+            min_dis_per_sg2 = dist_all.groupby('S2')['distance'].min().reset_index().rename(columns={'S2': 'S'})
+            min_dis_per_sg = pd.concat([min_dis_per_sg1, min_dis_per_sg2])
+            min_dis_per_sg = min_dis_per_sg.groupby('S')['distance'].min().reset_index()
+            del min_dis_per_sg1, min_dis_per_sg2
+            # sort by distance, ascending
+            dist_all.sort_values(by='distance', inplace=True)
+            # container for subgraphs
+            container = []
+            # final road network
+            roads_final = edges.copy()
+            roads_final[edge_id] = roads_final[edge_id].astype(int)
+
+            for i, row in dist_all.iterrows():
+                s1 = row['S1']
+                s2 = row['S2']
+                min_dis = min_dis_per_sg.loc[min_dis_per_sg['S'].isin([s1, s2]), 'distance'].min()
+                connect = False
+                # check if s1 is already in container
+                if s1 in container:
+                    # if s2 not in container, connect
+                    if s2 not in container:
+                        connect = True
+                    # if s2 also in container, connect only if distance in low
+                    elif row['distance'] < min_dis * 1.1:
+                        connect = True
+                # connect if s1 not in container
+                else:
+                    connect = True
+
+                # connect if True
+                if connect:
+                    # add s1, s2 to container and create line between nodes
+                    container.extend([s1, s2])
+                    with warnings.catch_warnings():
+                        warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
+                        # create lines in both directions
+                        node_from = nodes.loc[nodes[node_id] == row[node_id], node_geo]
+                        node_to = nodes.loc[nodes[node_id] == row['{}_near'.format(node_id)], node_geo]
+                        line = LineString([[node_from.x, node_from.y], [node_to.x, node_to.y]])
+                        # add to road network
+                        id_ = roads_final[edge_id].max()
+                        roads_final.loc[len(roads_final) + 1] = [id_ + 1, row[node_id], row['{}_near'.format(node_id)], 9, '{}000'.format(self.country), 0,
+                                                                 50, 0, line]
+                        roads_final.loc[len(roads_final) + 1] = [id_ + 2, row['{}_near'.format(node_id)], row[node_id], 11, '{}000'.format(self.country), 0,
+                                                                 50, 0, line]
+
+            # 5 remove single edges and small subgraphs
+            S_del = [_graph_u.subgraph(c).copy() for c in nx.connected_components(_graph_u) if len(c) <= 5]
+            # get nodes and edges from RU_del
+            nodes_del = []
+            edges_del = []
+            for sg in S_del:
+                # get all nodes and edges in sg
+                n_sg = np.unique([e[:-1] for e in (sg.edges)])
+                e_sg = np.unique([e[2] for e in (sg.edges)])
+                nodes_del.extend(n_sg)
+                edges_del.extend(e_sg)
+            roads_final = roads_final.loc[~roads_final[edge_id].isin(edges_del)]
+            nodes_final = nodes.loc[~nodes[node_id].isin(nodes_del)]
+
+        else:
+            roads_final, nodes_final = edges, nodes
+
+        return roads_final, nodes_final
+
 
 class Nodes:
     """Create nodes at the ends of edges"""
