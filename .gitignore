@@ -3,6 +3,7 @@
 *.RData
 *.Ruserdata
 *.ipynb_checkpoints
+*.idea
 *_files
 *nb.html
 .Rproj.user
@@ -23,4 +24,8 @@
 
 config.yml
 
+<<<<<<< .gitignore
 .idea/*
+
+cache/**
+>>>>>>> .gitignore
