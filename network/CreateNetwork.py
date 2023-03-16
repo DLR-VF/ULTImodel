@@ -6,6 +6,7 @@
 #            Deutsches Zentrum fuer Luft- und Raumfahrt
 # @brief Creates nodes between edges
 # =========================================================
+
 from datetime import datetime
 
 import geopandas as gpd
@@ -92,7 +93,6 @@ class Edges:
     def __init__(self, country, taz, taz_cn="country", taz_geo="geometry"):
         """
 
-<<<<<<< network/CreateNetwork.py
         @param country: code or name of country
         @param taz: GeoDataFrame including the TAZ
         @param taz_geo: Name of geometry column in TAZ layer, default "geometry
@@ -101,7 +101,6 @@ class Edges:
         @type taz_cn: str
         @type taz: gpd.GeoDataFrame
         @type country: str
->>>>>>> network/CreateNetwork.py
         """
         self.country = country
         self.edges = gpd.GeoDataFrame()
@@ -167,7 +166,6 @@ class Edges:
         n_poly = 0  # number of polygons with road network
         for i, poly in enumerate(polygons[self.taz_geo][:]):
             try:
-<<<<<<< network/CreateNetwork.py
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
                     warnings.filterwarnings("ignore", category=FutureWarning, append=True)
@@ -175,7 +173,6 @@ class Edges:
                     G = ox.graph_from_polygon(poly, simplify=False, custom_filter=filter_nw, retain_all=True)
                     G = ox.simplify_graph(G)
                     G = ox.simplification.consolidate_intersections(G, tolerance=0.002)
->>>>>>> network/CreateNetwork.py
                 G = ox.speed.add_edge_speeds(G, fallback=50, precision=0)
                 edges = gpd.GeoDataFrame([x[2] for x in G.edges.data()])[["highway", "speed_kph", "geometry"]]
                 if i == 0:
@@ -530,8 +527,10 @@ class Connectors:
             pop_t = pop_taz[pop_taz[taz_id] == t]
             if len(pop_t) > 0:
                 n_c = int(taz.loc[taz[taz_id] == t, "numcon"])
-                kmeans = KMeans(init="random", n_clusters=n_c, n_init=10, max_iter=300, random_state=42)
-                kmeans.fit(list(zip(pop_t.geometry.x, pop_t.geometry.y)))
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=UserWarning)
+                    kmeans = KMeans(init="random", n_clusters=n_c, n_init=10, max_iter=300, random_state=42)
+                    kmeans.fit(list(zip(pop_t.geometry.x, pop_t.geometry.y)))
                 # assign pop to cluster
                 pop_t = pd.concat([pop_t.reset_index(), pd.Series(kmeans.labels_, name="c_n")], axis=1)
                 # create GeoDataFrame with weights and coordinates of centers (connectors)
@@ -540,13 +539,13 @@ class Connectors:
                 conn['weight'] = conn['VALUE'] / conn['VALUE'].sum()
                 conn['nuts_id'] = t
                 conn = conn[cols]
-                return_con = return_con.append(conn)
+                return_con = pd.concat([return_con, conn])
 
         self.connectors = return_con
         self.connectors.crs = epsg_pop
         self.connectors['c_n'] = self.connectors.reset_index().index
 
-    def identify_connector_nodes(self, nodes, node_no="node_id", node_geom="geom", zone="nuts_id",
+    def identify_connector_nodes(self, nodes, node_no="node_id", node_geom="geometry", zone="nuts_id",
                                  weight="weight", country_check=False):
         """
         Move connector locations to network nodes
@@ -618,7 +617,7 @@ class Ferries:
     Create connections over water between islands and main land, using ferry routes and bridges as reference
     """
 
-    def __init__(self, taz, scope=None, taz_cn='cntr_code', taz_geo='geom'):
+    def __init__(self, taz, scope=None, taz_cn='cntr_code', taz_geo='geometry'):
         """
 
         @param taz: GeoDataFrame with TAZ cells
@@ -875,35 +874,40 @@ class CombineNetworks:
         # find borders for each country
         gdf_borderbuffer = gpd.GeoDataFrame()
 
-        for country in self.countries:
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
+            warnings.filterwarnings("ignore", category=FutureWarning, append=True)
+            warnings.filterwarnings("ignore", category=UserWarning, append=True)
 
-            country_ = taz_dis[taz_dis[self.taz_cn] == country]
-            country_ = country_[taz_geo].buffer(1)
+            for country in self.countries:
 
-            for index, row in taz_dis.iterrows():
+                country_ = taz_dis[taz_dis[self.taz_cn] == country]
+                country_ = country_[taz_geo].buffer(1)
 
-                if row[self.taz_cn] != country:
-                    intersec = country_.intersection(row[taz_geo].buffer(1))
-                    if not intersec.values.is_empty[0]:
-                        gdf_borderbuffer = gdf_borderbuffer.append(
-                            {'country1': country, 'country2': row[self.taz_cn], 'geometry': intersec.values[0]},
-                            ignore_index=True)
+                for index, row in taz_dis.iterrows():
 
-        # merge borders create and set geometry
-        borders = pd.merge(gdf_borderbuffer, gdf_borderbuffer, left_on=['country1', 'country2'],
-                           right_on=['country2', 'country1'])
-        borders['geometry'] = [r['geometry_x'].union(r['geometry_y']) for i, r in borders.iterrows()]
-        borders['border'] = borders['country1_x'] + borders['country1_y']
-        borders = borders.set_geometry('geometry')
-        borders.crs = 3035
-        # remove duplicates
-        borders['abc'] = ["".join(sorted(row['border'])) for i, row in borders.iterrows()]
-        borders.drop_duplicates(subset="abc", inplace=True)
-        # finalize
-        borders = borders[['border', 'country1_x', 'country1_y', 'geometry']]
-        borders.to_crs(epsg=4326, inplace=True)
+                    if row[self.taz_cn] != country:
+                        intersec = country_.intersection(row[taz_geo].buffer(1))
+                        if not intersec.values.is_empty[0]:
+                            new_border = gpd.GeoDataFrame(geometry=intersec)
+                            new_border[['country1', 'country2']] = [country, row[self.taz_cn]]
+                            gdf_borderbuffer = pd.concat([gdf_borderbuffer, new_border])
 
-        self.borders = borders
+            # merge borders create and set geometry
+            borders = pd.merge(gdf_borderbuffer, gdf_borderbuffer, left_on=['country1', 'country2'],
+                               right_on=['country2', 'country1'])
+            borders['geometry'] = [r['geometry_x'].union(r['geometry_y']) for i, r in borders.iterrows()]
+            borders['border'] = borders['country1_x'] + borders['country1_y']
+            borders = borders.set_geometry('geometry')
+            borders.crs = 3035
+            # remove duplicates
+            borders['abc'] = ["".join(sorted(row['border'])) for i, row in borders.iterrows()]
+            borders.drop_duplicates(subset="abc", inplace=True)
+            # finalize
+            borders = borders[['border', 'country1_x', 'country1_y', 'geometry']]
+            borders.to_crs(epsg=4326, inplace=True)
+
+            self.borders = borders
 
     def get_border_roads(self, roads_cn="cn"):
         """
@@ -913,7 +917,7 @@ class CombineNetworks:
         @return: self.border_roads; GDF with all roads within border buffer
         """
         if self.borders.crs == self.network.crs:
-            self.border_roads = gpd.overlay(self.network, self.borders, how='union')
+            self.border_roads = gpd.overlay(self.network, self.borders, how='union', keep_geom_type=True)
             # remove all streets that are not within the border
             self.border_roads = self.border_roads[~self.border_roads['border'].isna()].copy()
             # remove streets that are assigned to a wrong border
@@ -990,8 +994,10 @@ class CombineNetworks:
                 # find correct direction
                 pairs_b = pairs_b.merge(nodes_dir[[node_id, 'dir']], left_on='{}_x'.format(node_id), right_on=node_id,
                                         how='left')
+                pairs_b.drop(columns=[node_id], inplace=True)
                 pairs_b = pairs_b.merge(nodes_dir[[node_id, 'dir']], left_on='{}_y'.format(node_id), right_on=node_id,
                                         how='left')
+                pairs_b.drop(columns=[node_id], inplace=True)
                 pairs_b = pairs_b.loc[:, ~pairs_b.columns.duplicated()]
                 pairs_b = pairs_b[pairs_b['dir_x'] != pairs_b['dir_y']]
                 pairs_b['node_from'] = [
@@ -1005,15 +1011,18 @@ class CombineNetworks:
                 pairs_b = pairs_b.drop_duplicates(subset='node_from')
                 pairs_b = pairs_b.drop_duplicates(subset='node_to')
                 pairs_b = [[row['node_from'], row['node_to']] for i, row in pairs_b.iterrows()]
-                # create lines between node pairs
-                for l in pairs_b:
-                    # get coordinates and create LineString
-                    node_from = nodes_int.loc[nodes_int[node_id] == l[0], 'geometry']
-                    node_to = nodes_int.loc[nodes_int[node_id] == l[1], 'geometry']
-                    line = LineString([[node_from.x, node_from.y], [node_to.x, node_to.y]])
-                    # add to Lines GDF
-                    lines.loc[len(lines) + 1] = [id_st, l[0], l[1], 999, b + '0', 0, 50, 0, line, np.nan]
-                    id_st += 1
+
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
+                    # create lines between node pairs
+                    for l in pairs_b:
+                        # get coordinates and create LineString
+                        node_from = nodes_int.loc[nodes_int[node_id] == l[0], 'geometry']
+                        node_to = nodes_int.loc[nodes_int[node_id] == l[1], 'geometry']
+                        line = LineString([[node_from.x, node_from.y], [node_to.x, node_to.y]])
+                        # add to Lines GDF
+                        lines.loc[len(lines) + 1] = [id_st, l[0], l[1], 999, b + '0', 0, 50, 0, line, np.nan]
+                        id_st += 1
                 self.dict_borders.update({b: len(pairs_b)})
             else:
                 print('No border connection for {}'.format(b))
@@ -1021,4 +1030,6 @@ class CombineNetworks:
 
         # concat border crossings and rest of the network
         self.network_int = pd.concat([self.network, lines])
+        # ensure that IDs are integer
+        self.network_int[roads_id] = self.network_int[roads_id].astype(int)
         print("Finished connecting border roads at {}".format(datetime.now()))
