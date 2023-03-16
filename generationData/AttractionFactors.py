@@ -57,39 +57,45 @@ class AttractionIndex:
         taz_pop_g.rename(columns={pop_val: 'population'}, inplace=True)
         self.taz = self.taz.merge(taz_pop_g, how='left', on=self.taz_id)
 
-    def get_industry(self, taz_cn="cntr_code", inplace=None):
+    def industry_attributes_from_osm(self, return_taz=False):
         """
-        Extract industrial sites (polygons) per TAZ from OSM with landuse=industrial
+        Extract the number and aggregated area of polygons with landuse=industrial in OSM per TAZ
 
-        @param taz_cn: str, column name with country in self.taz
-        @param inplace: return GeoDataFrame; if True, GeoDataFrame is not returned
-        @return: GeoDataFrame with industry area polygons
+        Creates new columns in self.taz:
+                - ind_area_count  | number of industrial sites
+                - ind_area_sum    | aggregated area of industrial sites
+
+        TAZ with new industry column can be returned by setting return_taz=True
+
+        :param return_taz: if True, return a GeoDataFrame
+        :type return_taz: bool
+        :return: TAZ with industrial site count (ind_area_count) and area (ind_area_sum)
+        :rtype: gpd.GeoDataFrame
         """
-        # get industrial sites from OSM using country TAZ as polygon
-        countries = self.taz[taz_cn].unique()
-        print(". . . Start extracting OSM industrial sites {}".format(datetime.now()))
-        self.industry_ = gpd.GeoDataFrame(columns=['id', 'landuse', 'geometry'])
-        id_st = 0
-        for c in tqdm(countries):
-            taz_c = self.taz[self.taz[taz_cn]==c]
-            industry_c = ox.geometries.geometries_from_polygon(taz_c[self.taz_geo].unary_union, tags={"landuse": "industrial"})
-            if len(industry_c.geom_type.unique()) > 1:
-                industry_c = industry_c[industry_c.geom_type.isin(["MultiPolygon", "Polygon"])].copy()
-            industry_c['id'] = list(range(len(industry_c)))
-            industry_c['id'] = industry_c['id'] + id_st
-            industry_c = industry_c[['id', 'landuse', 'geometry']]
-            id_st += len(industry_c) + 1
+        taz_i = self.taz.copy()
+        taz_i[['ind_area_count', 'ind_area_sum']] = 0
+        # iterate over taz
+        for i, t in tqdm(self.taz.iterrows()):
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
+                warnings.filterwarnings("ignore", category=FutureWarning, append=True)
+                warnings.filterwarnings("ignore", category=UserWarning, append=True)
+                industry_t = ox.geometries.geometries_from_polygon(t['geometry'], tags={"landuse": "industrial"})
+            # only Polygon / Multipolygon geometries
+            if len(industry_t.geom_type.unique()) > 1:
+                industry_t = industry_t[industry_t.geom_type.isin(["MultiPolygon", "Polygon"])].copy()
+            # get number of industrial areas
+            taz_i.loc[i, 'ind_area_count'] = len(industry_t)
+            # get total area
+            industry_t.to_crs(epsg=3035, inplace=True)
+            # industry_t['area'] = industry_t.area
+            taz_i.loc[i, 'ind_area_sum'] = industry_t.area.sum()
+        # set self.taz to taz_i with industrial area information
+        self.taz = taz_i.copy()
 
-            self.industry_ = pd.concat([self.industry_, industry_c])
-            ind_crs = industry_c.crs
-            del industry_c
-
-        self.industry_.set_geometry('geometry', crs=ind_crs, inplace=True)
-
-        if not inplace:
-            return self.industry_
-
-        print(". . . Finished extracting OSM industrial sites {}".format(datetime.now()))
+        # return taz_i
+        if return_taz:
+            return taz_i
 
     def industry_attributes_from_gdf(self, industry_gdf, return_taz=False):
         """
@@ -108,9 +114,8 @@ class AttractionIndex:
         :return: TAZ with industrial site count (ind_area_count) and area (ind_area_sum)
         :rtype: gpd.GeoDataFrame
         """
-        if industry_gdf is None:
-            industry = self.industry_.reset_index()
-        elif type(industry_gdf) == gpd.GeoDataFrame:
+
+        if type(industry_gdf) == gpd.GeoDataFrame:
             industry = industry_gdf
             industry['id'] = list(range(len(industry)))
         else:
