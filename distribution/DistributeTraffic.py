@@ -185,7 +185,7 @@ class TargetValues:
 
         return {"short": unit * short_, "long": unit * long_, "int": unit * int_, "trans": unit * trans_}
 
-    def targets_freight_transport(self, cn, target_col='car_pkm', segments=None, shares_tkm=None, loads_t=None, unit=1.e+6):
+    def targets_freight_transport(self, cn, target_col='freight_tkm', segments=None, shares_tkm=None, loads_t=None, unit=1.e+6):
         """
         Calculate VKT and trips for the segments short and long distance (national) and international freight transport for a country
 
@@ -260,7 +260,7 @@ class TargetValues:
             tkm_transit = t_tra * dis_transit
             tkm = sum([tkm_imex, tkm_short, tkm_long, tkm_transit])
 
-            # transform tkm t vkm by using average tkm shares and average load
+            # transform tkm to vkm by using average tkm shares and average load
             lcv = shares_tkm['lcv'] * tkm / tkm_short
             mft = shares_tkm['mft'] * tkm / tkm_short
             hft = (shares_tkm['hft'] * tkm - (tkm - tkm_short)) / tkm_short
@@ -270,11 +270,11 @@ class TargetValues:
             vkm_mft = (tkm_short * mft) / loads_t['mft']
             vkm_hft = (tkm_short * hft) / loads_t['hft']
             vkm_short = vkm_lcv + vkm_mft + vkm_hft
-            vkm_long = tkm_long / 10
-            vkm_imex = tkm_imex / 10
+            vkm_long = tkm_long / loads_t['hft']
+            vkm_imex = tkm_imex / loads_t['hft']
 
-            return {"lcv": unit * vkm_lcv,"mft": unit * vkm_mft,"hft": unit * vkm_hft,"trips_short": vkm_short / dis_short,
-                    "long": unit * vkm_long,"trips_long": unit * (vkm_long/dis_long),"int": unit * vkm_imex,
+            return {"lcv": unit * vkm_lcv,"mft": unit * vkm_mft,"hft": unit * vkm_hft,"trips_short": unit * vkm_short / dis_short,
+                    "long": unit * vkm_long,"trips_long": unit * (vkm_long/dis_long), "int": unit * vkm_imex,
                     "trips_int": unit * (vkm_imex/dis_long),"trans": unit * (tkm_transit/loads_t['hft']), 'trips_trans': unit*((tkm_transit/loads_t['hft'])/ dis_transit)}
         else:
             raise KeyError('Segments and shares / loads do not match!')
@@ -331,7 +331,7 @@ class GravityModel:
         mx_int[mx_fil > 1] = 9.e+12
         return mx_int
 
-    def trip_distribution_pt(self, target, cn=None, taz_pop='population', alpha=0.5, gamma=-2.75, unit_dis=1000, mob_rate=36.):
+    def trip_distribution_pt(self, target, cn=None, taz_pop='population', alpha=0.5, gamma=-2.75, unit_dis=1000, unit_tt = 60, mob_rate=36.):
         """
         Distribute personal transport using a gravity model and an input for total VKT
         Gravity model parameters are given as defaults and were estimated using the German NHTS MiD 2017
@@ -342,6 +342,7 @@ class GravityModel:
         @param alpha: float, alpha parameter in gravity model, default 0.5
         @param gamma: float, gamma parameter in gravity model, default -2.75
         @param unit_dis: int or float, factor to transform unit in distance matrix to km, default 1000 (suggesting distance is in m)
+        @param unit_tt: factor to transform unit in travel time matrix to min, default 60 (suggesting distance is in s)
         @param mob_rate: float, mobility rate of inhabitants, default 36
         @return: np.array with OD trip matrix
         """
@@ -351,6 +352,11 @@ class GravityModel:
             taz = self.taz
             mtx = self.matrix_international()
             #mtx[mtx==9.e+12] = 0
+
+        # transform units in mtx to min, km
+        mtx[:, :, 0] /= unit_tt
+        mtx[:, :, 1] /= unit_dis
+
         # trip generation
         taz['pt_goal'] = taz[taz_pop] * mob_rate
 
@@ -368,14 +374,14 @@ class GravityModel:
         # choice probabilities and trips
         mx_trips = get_trip_matrix(mx_grav, taz, 'pt_goal', taz_id='id')
         # scaling to match target
-        vkt = (mx_trips*mtx[:, :, 1]).sum()/unit_dis
+        vkt = (mx_trips*mtx[:, :, 1]).sum()
         scale_fac = target / vkt
         print('Scaling factor for {}: {}'.format(cn, scale_fac))
         mx_trips *= scale_fac
 
         return mx_trips
 
-    def trip_distribution_ft(self, target_trips, target_vkt=None, cn=None, beta=0.00421, unit_dis=1000, trips_key=''):
+    def trip_distribution_ft(self, target_trips, target_vkt=None, cn=None, beta=0.00421, unit_tt=60, unit_dis=1000, trips_key=''):
         """
         Distribute freight transport using a gravity model and an input for total trips and VKT
         Gravity model parameters are given as defaults and were estimated using microscopic truck data for Germany
@@ -384,6 +390,7 @@ class GravityModel:
         @param cn: None or str, country code; default None means all countries in self.taz are included
         @param beta: float, gamma parameter in gravity model, default 0.00421
         @param unit_dis: int or float, factor to transform unit in distance matrix to km, default 1000 (suggesting distance is in m)
+        @param unit_tt: factor to transform unit in travel time matrix to min, default 60 (suggesting distance is in s)
         @param trips_key: str, key for segment if cn is None target_trips is dict
         @return: np.array with OD trip matrix
         """
@@ -399,9 +406,10 @@ class GravityModel:
             index_col = 'index_int'
             if t_targ != dict:
                 raise ValueError('target_trips has to be dict if cn is None, is {}'.format(t_targ))
-        if unit_dis == 1000:
-            # assure distance matrix is in km
-            mtx[:, :, 1] /= 1000
+
+        # transform units in mtx to min, km
+        mtx[:, :, 0] /= unit_tt
+        mtx[:, :, 1] /= unit_dis
 
         # trip generation
         if cn is not None:
@@ -430,7 +438,7 @@ class GravityModel:
 
         if target_vkt is not None:
             # determine relation to target
-            vkt = (mx_trips * mtx[:, :, 1]).sum() / unit_dis
+            vkt = (mx_trips * mtx[:, :, 1]).sum()
             scale_fac = target_vkt / vkt
             print('Relation to target vkm for {}: {}'.format(cn, scale_fac))
 
@@ -609,7 +617,10 @@ class IntraZonal:
                 taz_2.loc[taz_2[taz_id].isin(sur_ids_taz), '{}_sub'.format(veh_type)] += taz_2.loc[taz_2[taz_id].isin(sur_ids_taz), 'weight2'] * taz_veh * taz_2.loc[taz_2[taz_id].isin(sur_ids_taz), sub_len]
 
         net.drop(columns=['weight', 'weight2', 'weighted_length', 'weighted_length2'], inplace=True)
-        taz_2.drop(columns=['weight2', 'weighted_sub', 'weighted_sub2'], inplace=True)
+
+        cols_keep = ['{}_sub'.format(veh_type) for veh_type in veh_types]
+        cols_keep.extend([taz_id])
+        taz_2 = taz_2[cols_keep]
 
         return net, taz_2
 
