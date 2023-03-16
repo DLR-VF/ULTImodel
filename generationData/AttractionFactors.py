@@ -12,6 +12,8 @@ import pandas as pd
 import geopandas as gpd
 import osmnx as ox
 from datetime import datetime
+import warnings
+from shapely.errors import ShapelyDeprecationWarning
 from tqdm import tqdm
 
 
@@ -20,12 +22,15 @@ class AttractionIndex:
     Calculate population and industrial areas per TAZ, transform to attraction index
     """
 
-    def __init__(self, taz, taz_geo="geom", taz_id="nuts_id"):
+    def __init__(self, taz, taz_geo="geometry", taz_id="nuts_id"):
         """
 
-        @param taz: GeoDataFrame with TAZ
-        @param taz_geo: str; column name of geometry of taz
-        @param taz_id: str; column name of id column in taz
+        :param taz: GeoDataFrame with TAZ
+        :param taz_geo: column name of geometry of taz
+        :param taz_id: column name of id column in taz
+        :type taz: gpd.GeoDataFrame
+        :type taz_geo: str
+        :type taz_id: str
         """
         self.taz = taz
         self.taz_geo = taz_geo
@@ -35,10 +40,14 @@ class AttractionIndex:
     def population_from_point(self, pop_nodes, pop_val="VALUE"):
         """
         Aggregate population per TAZ based on point layer with population density
+        
+        --> result: self.taz as GeoDataFrame is updated with total population per cell
 
-        @param pop_nodes: GeoDataFrame with population density (points)
-        @param pop_val: str; name of column with population density in pop_nodes
-        @return: self.taz as GeoDataFrame is updated with total population per cell
+        :param pop_nodes: GeoDataFrame with population density (points)
+        :param pop_val: name of column with population density in pop_nodes
+        :return: None
+        :type pop_nodes: gpd.GeoDataFrame
+        :type pop_val: str
         """
         # overlay taz and population
         taz_pop = gpd.overlay(pop_nodes, self.taz)
@@ -82,12 +91,22 @@ class AttractionIndex:
 
         print(". . . Finished extracting OSM industrial sites {}".format(datetime.now()))
 
-    def industry_attributes(self, industry_gdf=None):
+    def industry_attributes_from_gdf(self, industry_gdf, return_taz=False):
         """
-        Aggregate total area and count of industrial sites per TAZ based on GDF with industrial areas
+        Aggregate total area and count of industrial sites per TAZ based on a GeoDataFrame with industrial areas
+        
+        --> result: self.taz as GeoDataFrame is updated with industrial area data per cell
 
-        @param industry_gdf: GeoDataFrame with industry areas (Polygons); if None, self.industry_ is used
-        @return: self.taz as GeoDataFrame is updated with industrial area data per cell
+         Creates new columns in self.taz:
+                - ind_area_count  | number of industrial sites
+                - ind_area_sum    | aggregated area of industrial sites
+
+        :param industry_gdf: GeoDataFrame with industry areas (Polygons)
+        :type industry_gdf: gpd.GeoDataFrame
+        :param return_taz: if True, return a GeoDataFrame
+        :type return_taz: bool
+        :return: TAZ with industrial site count (ind_area_count) and area (ind_area_sum)
+        :rtype: gpd.GeoDataFrame
         """
         if industry_gdf is None:
             industry = self.industry_.reset_index()
@@ -95,8 +114,7 @@ class AttractionIndex:
             industry = industry_gdf
             industry['id'] = list(range(len(industry)))
         else:
-            print('Wrong input type for industry_gdf {}'.format(str(type(industry_gdf))))
-            industry = None
+            raise ValueError('Wrong input type for industry_gdf {}'.format(str(type(industry_gdf))))
 
         # get area in km2 per polygon
         industry.to_crs(epsg=3035, inplace=True)
@@ -113,13 +131,20 @@ class AttractionIndex:
         taz_industry = pd.merge(taz_ind_area, taz_ind_count, on=self.taz_id)
         self.taz = self.taz.merge(taz_industry, how='left', on=self.taz_id)
 
+        # return taz
+        if return_taz:
+            return self.taz
+
     def attraction_index(self, scope=None, taz_cn='cntr_code', alpha=1.):
         """
         Create attraction index with Cobb-Douglas transformation
-        @param scope: None or str; either look at all TAZ or single country (str of ISO-code)
-        @param taz_cn: str; column name for country identifier in self.taz
-        @param alpha: float; alpha parameter for Cobb Douglas formula
-        @return: GeoDataFrame with taz in scope and attraction index for scope
+        :param scope: either look at all TAZ (None) or single country (str of ISO-code)
+        :param taz_cn: column name for country identifier in self.taz
+        :param alpha: alpha parameter for Cobb Douglas formula
+        :type scope: str
+        :type taz_cn: str
+        :type alpha: float
+        :return: GeoDataFrame with taz in scope and attraction index for scope
         """
         # set scope
         if scope is None:
@@ -148,12 +173,15 @@ class BorderCrossingAtts:
     Calculate country attributes like number of border crossing streets, neighboring countries that define the character of border-crossing road traffic
     """
 
-    def __init__(self, taz, taz_cn="cntr_code", taz_geo="geom"):
+    def __init__(self, taz, taz_cn="cntr_code", taz_geo="geometry"):
         """
 
-        @param taz: GeoDataFrame with TAZ
-        @param taz_cn: str, column name of country in TAZ
-        @param taz_geo: str, column name of geometry in TAZ
+        :param taz: GeoDataFrame with TAZ
+        :param taz_cn: column name of country in TAZ
+        :param taz_geo: column name of geometry in TAZ
+        :type taz: gpd.GeoDataFrame
+        :type taz_cn: str
+        :type taz_geo: str
         """
         self.taz = taz
         self.countries = taz[taz_cn].unique()
@@ -170,8 +198,9 @@ class BorderCrossingAtts:
         """
         Create GeoDataFrame with borders, using a defined buffer around these borders (i.e. with a 5000m buffer, there will be Polygons along borders with a width of 5000m)
 
-        @param buffer: float, total buffer width in m, default 5000m
-        @return: GeoDataFrame with buffer polygons around borders
+        :param buffer: total buffer width in m, default 5000m
+        :type buffer: float
+        :return: GeoDataFrame with buffer polygons around borders
         """
         border = self.country_layer.copy()
         # set buffer around polygon borders (width of border polygons)
@@ -180,42 +209,51 @@ class BorderCrossingAtts:
         # find borders for each country
         gdf_borderbuffer = gpd.GeoDataFrame()
 
-        for country in self.countries:
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
+            warnings.filterwarnings("ignore", category=FutureWarning, append=True)
+            warnings.filterwarnings("ignore", category=UserWarning, append=True)
 
-            country_ = border[border[self.taz_cn] == country]
-            country_ = country_[self.taz_geo].buffer(1)
+            for country in self.countries:
 
-            for index, row in border.iterrows():
+                country_ = border[border[self.taz_cn] == country]
+                country_ = country_[self.taz_geo].buffer(1)
 
-                if row[self.taz_cn] != country:
-                    intersec = country_.intersection(row[self.taz_geo].buffer(1))
-                    if not intersec.values.is_empty[0]:
-                        gdf_borderbuffer = gdf_borderbuffer.append(
-                            {'country1': country, 'country2': row[self.taz_cn], 'geometry': intersec.values[0]},
-                            ignore_index=True)
+                for index, row in border.iterrows():
 
-        # merge borders create and set geometry
-        borders = pd.merge(gdf_borderbuffer, gdf_borderbuffer, left_on=['country1', 'country2'],
-                           right_on=['country2', 'country1'])
-        borders['geometry'] = [r['geometry_x'].union(r['geometry_y']) for i, r in borders.iterrows()]
-        borders['border'] = borders['country1_x'] + borders['country1_y']
-        borders = borders.set_geometry('geometry')
-        borders.crs = 3035
-        # remove duplicates
-        borders['abc'] = ["".join(sorted(row['border'])) for i, row in borders.iterrows()]
-        borders.drop_duplicates(subset="abc", inplace=True)
-        # finalize
-        borders = borders[['border', 'country1_x', 'country1_y', 'geometry']]
-        borders.rename(columns={'country1_x': 'country1', 'country1_y': 'country2'}, inplace=True)
-        borders.to_crs(epsg=4326, inplace=True)
+                    if row[self.taz_cn] != country:
+                        intersec = country_.intersection(row[self.taz_geo].buffer(1))
+                        if not intersec.values.is_empty[0]:
+                            new_border = gpd.GeoDataFrame(geometry=intersec)
+                            new_border[['country1', 'country2']] = [country, row[self.taz_cn]]
+                            gdf_borderbuffer = pd.concat([gdf_borderbuffer, new_border])
+
+            # merge borders create and set geometry
+            borders = pd.merge(gdf_borderbuffer, gdf_borderbuffer, left_on=['country1', 'country2'],
+                               right_on=['country2', 'country1'])
+            borders['geometry'] = [r['geometry_x'].union(r['geometry_y']) for i, r in borders.iterrows()]
+            borders['border'] = borders['country1_x'] + borders['country1_y']
+            borders = borders.set_geometry('geometry')
+            borders.crs = 3035
+            # remove duplicates
+            borders['abc'] = ["".join(sorted(row['border'])) for i, row in borders.iterrows()]
+            borders.drop_duplicates(subset="abc", inplace=True)
+            # finalize
+            borders = borders[['border', 'country1_x', 'country1_y', 'geometry']]
+            borders.rename(columns={'country1_x': 'country1', 'country1_y': 'country2'}, inplace=True)
+            borders.to_crs(epsg=4326, inplace=True)
+        
         return borders
 
-    def shared_borders(self, inplace=None):
+    def shared_borders(self, inplace=False):
         """
         Determine the share of land borders of total country border. Islands would have a share of 0, while countries without a cost would land at 1.
+        
+        --> result: border shares are merged to self.country_layer
 
-        @param inplace: return DataFrame; if True, DataFrame is not returned
-        @return: pd.DataFrame with border length and share per country, merged to self.country_layer
+        :param inplace: return DataFrame; if True, DataFrame is not returned
+        :type inplace: bool
+        :return: pd.DataFrame with border length and share per country / if inplace=True return None
         """
         self.border_layer = self.get_borderbuffer(buffer=5000)
         border_shares = pd.DataFrame()
@@ -241,9 +279,11 @@ class BorderCrossingAtts:
                 border_length_shared = 0
             ctr_border_share = (border_length_shared / border_length)
 
-            border_shares = border_shares.append(
-                {'country': country, 'border_share': ctr_border_share, 'border_length': border_length,
-                 'border_length_shared': border_length_shared}, ignore_index=True)
+            border_shares = pd.concat([border_shares,
+                                       pd.DataFrame({'country': country, 'border_share': ctr_border_share,
+                                                     'border_length': border_length, 'border_length_shared': border_length_shared},
+                                                    index=[0])])
+        border_shares.reset_index(inplace=True)
 
         # merge to countries
         self.country_layer = pd.merge(self.country_layer, border_shares, how='left', left_on=self.taz_cn, right_on='country')
@@ -255,12 +295,18 @@ class BorderCrossingAtts:
     def border_streets(self, net, net_type="type", type_filter=None, inplace=None):
         """
         Count the number of border crossing streets per country
+        
+        --> result: number of border crossings is merged to self.country_layer
 
-        @param net: GeoDataFrame with international road network
-        @param net_type: str, name of column specifiying road type in net
-        @param type_filter: list of road types to filter for border crossing roads; default None, meaning types [1,2]
-        @param inplace: return DataFrame; if True, DataFrame is not returned
-        @return: pd.DataFrame with number of border crossing streets per country
+        :param net: GeoDataFrame with international road network
+        :param net_type: name of column specifiying road type in net
+        :param type_filter: list of road types to filter for border crossing roads; default None, meaning types [1,2]
+        :param inplace: return DataFrame; if True, DataFrame is not returned
+        :type net: gpd.GeoDataFrame
+        :type net_type: str
+        :type type_filter: list
+        :type inplace: bool
+        :return: pd.DataFrame with number of border crossing streets per country / if inplace=True return None
         """
 
         if type_filter is None:
@@ -269,7 +315,7 @@ class BorderCrossingAtts:
         net = net[net[net_type].isin(type_filter)]
         # get streets within border layer
         border_2m = self.get_borderbuffer(buffer=2)
-        borderbuffer_streets = gpd.overlay(net, border_2m, how="union")
+        borderbuffer_streets = gpd.overlay(net, border_2m, how="union", keep_geom_type=True)
         # aggregate streets per country and border
         country1_grp = borderbuffer_streets.groupby('country1')['border'].aggregate('count').reset_index()
         country2_grp = borderbuffer_streets.groupby('country2')['border'].aggregate('count').reset_index()
@@ -286,12 +332,15 @@ class BorderCrossingAtts:
         if not inplace:
             return country_grp
 
-    def count_neighbors(self, inplace=None):
+    def count_neighbors(self, inplace=False):
         """
         Determine the number of direct neighbor countries (shared border)
+        
+        --> result: number of neighbors is merged to self.country_layer
 
-        @param inplace: return DataFrame; if True, DataFrame is not returned
-        @return: pd.DataFrame with number of neighbor countries per country
+        :param inplace: return DataFrame; if True, DataFrame is not returned
+        :type inplace: bool
+        :return: pd.DataFrame with number of neighbor countries per country / if inplace=True return None
         """
         dict_ = {}
         for c in self.countries:
@@ -305,15 +354,21 @@ class BorderCrossingAtts:
         if not inplace:
             return neighbors
 
-    def pop_area(self, pop_values=None, pop_cn="country", taz_pop="population", inplace=None):
+    def pop_area(self, pop_values=None, pop_cn="country", taz_pop="population", inplace=False):
         """
         Determine total population and area im km² per country. Population can be determined by aggregating population per taz or with and external input DataFrame
+        
+        --> result: population and area are merged to self.country_layer
 
-        @param pop_values: pd.DataFrame with population per country; if None, population will be aggregated from taz attributes, default None
-        @param pop_cn: str, name of column with country name in pop_values
-        @param taz_pop: str, name of column with population in self.taz
-        @param inplace: return GeoDataFrame with border shares; if True, DataFrame is not returned
-        @return: GeoDataFrame with countries and their population and area
+        :param pop_values: pd.DataFrame with population per country; if None, population will be aggregated from taz attributes, default None
+        :param pop_cn: name of column with country name in pop_values
+        :param taz_pop: name of column with population in self.taz
+        :param inplace: return GeoDataFrame with border shares; if True, DataFrame is not returned
+        :type pop_values: pd.DataFrame
+        :type pop_cn: str
+        :type taz_pop: str
+        :type inplace: bool
+        :return: GeoDataFrame with countries and their population and area / if inplace=True return None
         """
         if pop_values is None:
             # aggregate population per country from taz
