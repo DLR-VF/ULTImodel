@@ -24,7 +24,20 @@ class Matrix:
     def __init__(self, conn, zone_col='zone', id_col='con_id', weight_col='weight', x_='x', y_='y', conn_geo='geometry'):
         """
 
-        @param conn: DF / GDF of connector nodes; if DF, include x and y coordinates
+        :param conn: DF / GDF of connector nodes; if DF, include x and y coordinates
+        :param zone_col: name of column with zone ID in conn
+        :param id_col: name of connector ID column in conn
+        :param weight_col: name of weight column in conn
+        :param x_: name of x coordinate column in conn (if conn does not have a geometry column)
+        :param y_: name of y coordinate column in conn (if conn does not have a geometry column)
+        :param conn_geo: name of geometry column in conn (if conn is a GeoDataFrame)
+        :type conn: pd.DataFrame or gpd.GeoDataFrame
+        :type zone_col: str
+        :type id_col: str
+        :type weight_col: str
+        :type x_: str
+        :type y_: str
+        :type conn_geo: str
         """
         self.conn = conn
         if type(self.conn) == gpd.GeoDataFrame:
@@ -42,12 +55,15 @@ class Matrix:
 
         self.all_mtx = np.zeros((len(conn),len(conn),2))
 
-    def osrm_request_nodes(self, save_np=False):
+    def osrm_request_nodes(self, save_np=None):
         """
         OSRM Request: extract travel durations and distances from OSM routing
+        
+        --> result: self.all_mtx as updated npy array with distances and durations between connector nodes
 
-        @param save_np: default False; str with filename if a npy-file of self.all_mtx is saved, updated with the results per iteration
-        @return: None; self.all_mtx as updated npy array with distances and durations between connector nodes
+        :param save_np: default None; filename for saving result matrux, if given, a npy-file of self.all_mtx is saved, updated with the results per iteration
+        :type save_np: str
+        :return: None
         """
         # create coordinates
         coord = np.c_[self.conn[self.x_], self.conn[self.y_]]
@@ -94,7 +110,7 @@ class Matrix:
                 self.all_mtx[st:en, st2:en2, 1] += np.array(r_sl.json().get('distances')).astype("float64")  # distance
                 st2 += 100
             st += 100
-            if save_np != False:
+            if save_np is not None:
                 np.save(save_np, self.all_mtx)
         print('total time requests:', time.time() - time1, 's',
               '({} min)'.format(str(round(float(time.time() - time1) / 60, 2))))
@@ -102,8 +118,9 @@ class Matrix:
 
     def transform_to_taz(self):
         """
-        Use connectors weights to generate the mean travel time and distances per taz
-        @return: npy array with weighted mean travel times and distances
+        Use connectors weights to generate the mean travel time and distances per taz, based on matrices between connectors
+        :return: array with weighted mean travel times and distances and DataFrame with zone IDs and index numbers (index in matrix)
+        :rtype: np.array, pd.DataFrame
         """
         # assign conn ID to zones
         self.conn[self.id_col] = np.arange(len(self.conn))
