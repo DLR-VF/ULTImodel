@@ -331,7 +331,7 @@ class GravityModel:
         mx_int[mx_fil > 1] = 9.e+12
         return mx_int
 
-    def trip_distribution_pt(self, target, cn=None, taz_pop='population', alpha=0.5, gamma=-2.75, unit_dis=1000, unit_tt = 60, mob_rate=36.):
+    def trip_distribution_pt(self, target, cn=None, taz_pop='population', alpha=0.5, gamma=-2.75, unit_dis=1000, unit_tt = 60, mob_rate=36., occ_rate=1.3):
         """
         Distribute personal transport using a gravity model and an input for total VKT
         Gravity model parameters are given as defaults and were estimated using the German NHTS MiD 2017
@@ -344,6 +344,7 @@ class GravityModel:
         @param unit_dis: int or float, factor to transform unit in distance matrix to km, default 1000 (suggesting distance is in m)
         @param unit_tt: factor to transform unit in travel time matrix to min, default 60 (suggesting distance is in s)
         @param mob_rate: float, mobility rate of inhabitants, default 36
+        @param occ_rate: average vehicle occupancy
         @return: np.array with OD trip matrix
         """
         if cn is not None:
@@ -376,8 +377,11 @@ class GravityModel:
         # scaling to match target
         vkt = (mx_trips*mtx[:, :, 1]).sum()
         scale_fac = target / vkt
-        print('Scaling factor for {}: {}'.format(cn, scale_fac))
+        print('Scaling factor personal transport for {}: {}'.format(cn, scale_fac))
         mx_trips *= scale_fac
+
+        # transform person trips to vehicle trips
+        mx_trips /= occ_rate
 
         return mx_trips
 
@@ -440,7 +444,7 @@ class GravityModel:
             # determine relation to target
             vkt = (mx_trips * mtx[:, :, 1]).sum()
             scale_fac = target_vkt / vkt
-            print('Relation to target vkm for {}: {}'.format(cn, scale_fac))
+            print('Freight transport gravity model result for {}: Relation to target vkm {}'.format(cn, scale_fac))
 
         return mx_trips
 
@@ -466,7 +470,7 @@ class IntraZonal:
         self.link_id = link_id
 
     def road_type_weighted_single(self, target, weights=None, veh_types=None, taz_id='nuts_id',
-                                  index='population', sub_len='length', net_type='type'):
+                                  index='population', sub_len='length', net_type='type', occ_rate=1.):
         """
         Distribute total VKT per TAZ and assign loads to roads within this TAZ, weighted by road type
 
@@ -477,6 +481,7 @@ class IntraZonal:
         @param index: str, name of column with attraction index to be used for trip generation in self.taz, defaults to 'population'
         @param sub_len: str, name of column with length of subordinate network in self.taz, defaults to 'length'
         @param net_type: str, name of column with road type in self.net, defaults to 'type'
+        @param occ_rate: average vehicle occupancy (applied for personal transport, i.e. if veh_type == 'car')
         @return: gpd.GeoDataFrame or pd.DataFrame for network with traffic loads, taz with subordinate network VKT
         """
         if weights is None:
@@ -520,6 +525,10 @@ class IntraZonal:
 
             vkt_p_p = target[veh_type] / self.taz[index].sum()
 
+            if veh_type == 'car':
+                # apply occupancy rate
+                vkt_p_p /= occ_rate
+
             # calculate vkt per taz
             taz_2['goal_taz_{}'.format(veh_type)] = taz_2[index] * vkt_p_p
             taz_2['goal_norm_{}'.format(veh_type)] = taz_2['goal_taz_{}'.format(veh_type)] / taz_2['sum_weighted_length']
@@ -542,7 +551,7 @@ class IntraZonal:
 
     def road_type_weighted_multiple(self, target, matrix_dis, veh_types=None, weights=None, taz_id='nuts_id', taz_mx_id='id',
                                     index='index_nat', sub_len='length', net_type='type', distance=55, cell_size=500,
-                                    fac_cell=1.5):
+                                    fac_cell=1.5, occ_rate=1.):
         """
         Distribute total VKT per TAZ and assign loads to roads within this TAZ and surrounding TAZ, weighted by road type
 
@@ -558,6 +567,7 @@ class IntraZonal:
         @param distance: float, max distance between TAZ to be included in km, defaults to 55km
         @param cell_size: float, max cell size of TAZ to force inclusion of surrounding TAZ, defaults to 500km²
         @param fac_cell: float, factor to apply to main TAZ during distribution, defaults to 1.5
+        @param occ_rate: average vehicle occupancy (applied for personal transport, i.e. if veh_type == 'car')
         @return: gpd.GeoDataFrame or pd.DataFrame for network with traffic loads, taz with subordinate network VKT
         """
 
@@ -571,6 +581,9 @@ class IntraZonal:
         taz_2 = self.taz[[taz_id, taz_mx_id, index, 'area', sub_len]].copy()
         for veh_type in veh_types:
             taz_2[veh_type] = taz_2[index] / taz_2[index].sum() * target[veh_type]
+            if veh_type == 'car':
+                # apply occupancy rate
+                taz_2[veh_type] /= occ_rate
             net['{}_short'.format(veh_type)] = 0
             taz_2['{}_sub'.format(veh_type)] = 0
 
