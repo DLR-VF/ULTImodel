@@ -8,6 +8,7 @@
 # =========================================================
 
 from datetime import datetime
+from tqdm import tqdm
 
 import geopandas as gpd
 import pandas as pd
@@ -16,7 +17,6 @@ from shapely.geometry import Point, LineString, MultiPolygon
 import numpy as np
 import osmnx as ox
 import networkx as nx
-from shapely.ops import unary_union
 from scipy.spatial import cKDTree
 
 import warnings
@@ -85,6 +85,33 @@ def graph_from_gdf(nodes, edges, node_id='node_id', node_geo='geometry', edge_id
     edge_graph.set_index([edge_from, edge_to, edge_id], inplace=True)
 
     return ox.utils_graph.graph_from_gdfs(node_graph, edge_graph)
+
+
+def subordinate_road_length(taz_sub, sub_type="secondary"):
+    """
+    Calculate the subordinate network length per TAZ for a selected category
+
+    @param taz_sub: TAZ GeoDataFrame
+    @param sub_type: highway type for subordinate network
+    @return: GeoDataFrame with aggregated network length per TAZ
+    @type sub_type: str
+    :rtype: gpd.GeoDataFrame
+    """
+    taz_sub['length_sub'] = 0
+    # iterate over TAZ
+    for i, t in tqdm(taz_sub.iterrows()):
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
+            sub_edges = ox.geometries.geometries_from_polygon(t['geometry'], tags={"highway": sub_type})
+        # remove geometries other than line
+        if len(sub_edges.geom_type.unique()) > 1:
+            sub_edges = sub_edges[sub_edges.geom_type.isin(["MultiLineString", "LineString"])].copy()
+
+        # calculate length per edge in km and aggregate length per taz
+        sub_edges = sub_edges.to_crs(epsg=3035)
+        taz_sub.loc[i, "length_sub"] = sub_edges.length.sum() / 1000
+
+    return taz_sub
 
 
 class Edges:
@@ -244,52 +271,27 @@ class Edges:
         self.edges = self.edges[
             ["ultimo_id", "from_node", "to_node", "type", "nuts_id", "length", "speed_kph", "tt", "geometry"]]
 
-    def subordinate_road_length(self, taz_id, sub_type="secondary"):
-        """
-        Calculate the subordinate network length per TAZ for a selected category
-
-        @param taz_id: Name of ID-column in TAZ layer
-        @param sub_type: highway type for subordinate network, default "secondary"
-        @return: DataFrame with aggregated network length per TAZ
-        @type sub_type: str
-        @type taz_id: str
-        """
-        # get subordinate network from OSM
-        taz_cn = self.taz[self.taz[self.taz_cn] == self.country]
-        if len(taz_cn) > 1:
-            poly = MultiPolygon(unary_union(taz_cn.geometry))
-        else:
-            poly = taz_cn.iloc[0][self.taz_geo]
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
-            sub_edges = ox.geometries.geometries_from_polygon(poly, tags={"highway": sub_type})
-        # remove geometries other than line
-        if len(sub_edges.geom_type.unique()) > 1:
-            sub_edges = sub_edges[sub_edges.geom_type.isin(["MultiLineString", "LineString"])].copy()
-        # overlay with TAZ: assign taz id to edges
-        sub_edges.crs = 'epsg:4326'
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=UserWarning)
-            sub_edges = gpd.overlay(sub_edges[['geometry']], self.taz[[taz_id, self.taz_geo]], how='union')
-        # calculate length per edge in km and aggregate length per taz
-        sub_edges = sub_edges.to_crs(epsg=3035)
-        sub_edges["length"] = sub_edges.length / 1000
-        # return DataFrame with nuts_id as index
-        return pd.DataFrame(sub_edges.groupby(taz_id)['length'].apply(sum))
-
     def connect_subgraphs(self, nodes, edges=None, node_id='node_id', node_geo='geometry', edge_id='ultimo_id', edge_from='from_node', edge_to='to_node'):
         """
         Ensure that the road network is connected, i.e. each node is connected to each other. If there are multiple subgraphs,
         connect the larger subgraphs and remove singular edges.
 
-        @param nodes:
-        @param edges:
-        @param node_id:
-        @param node_geo:
-        @param edge_id:
-        @param edge_from:
-        @param edge_to:
-        @return:
+        @param nodes: network nodes
+        @param edges: network edges; if None, use self.edges
+        @param node_id: column name with ID in nodes
+        @param node_geo: column name with geometry in nodes
+        @param edge_id: column name with ID in edges
+        @param edge_from: column name with ID of start node in edges
+        @param edge_to: column name with ID of end node in edges
+        :type nodes: gpd.GeoDataFrame
+        :type edges: gpd.GeoDataFrame
+        :type node_id: str
+        :type node_geo: str
+        :type edge_id: str
+        :type edge_from: str
+        :type edge_to: str
+        @return: GeoDataFrames with 1) final network edges and 2) final network nodes
+        :rtype: gpd.GeoDataFrame
         """
         if edges is None:
             edges = self.edges
@@ -314,9 +316,9 @@ class Edges:
                 sg_g = sg[1]
                 # get all nodes in sg
                 n_sg = [e[:-1] for e in sg_g.edges]
-                # get end nodes: all nodes with two or less edges
+                # get end nodes: all nodes with two or less edges (or minimum number of edges if min>2)
                 n_sg = np.unique(n_sg, return_counts=True)
-                end_sg = n_sg[0][n_sg[1] <= 2]
+                end_sg = n_sg[0][n_sg[1] <= max(2, min(n_sg[1]))]
                 end_nodes.update({sg_id: end_sg})
 
             # 3 calculate distances between end nodes
@@ -325,7 +327,10 @@ class Edges:
                 for ii in range(len(end_nodes))[i + 1:]:
                     nodes_sg2 = nodes[nodes[node_id].isin(end_nodes[ii])]
                     # distances between nodes_sg, nodes_sg2
-                    dist_ = ckdnearest(nodes_sg, nodes_sg2, node_id, node_id, 2)
+                    if len(nodes_sg2) > 1:
+                        dist_ = ckdnearest(nodes_sg, nodes_sg2, node_id, node_id, 2)
+                    else:
+                        dist_ = ckdnearest(nodes_sg, nodes_sg2, node_id, node_id, 1)
                     # filter minimal distances
                     dist_ = dist_.loc[dist_['distance'] < dist_['distance'].min() * 1.3]
                     # add sg id
@@ -401,6 +406,9 @@ class Edges:
 
         else:
             roads_final, nodes_final = edges, nodes
+
+        roads_final.crs=4326
+        nodes_final.crs = 4326
 
         return roads_final, nodes_final
 
