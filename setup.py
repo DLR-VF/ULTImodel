@@ -12,6 +12,11 @@ import setuptools
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
+'''
+import required packages from requirements file
+with open("requirements.txt") as f:
+    INSTALL_REQUIRES = [line.strip() for line in f.readlines()]'''
+
 setuptools.setup(
     name='ultimo',
     version='1.0',
@@ -28,5 +33,5 @@ setuptools.setup(
     },
     license='BSD',
     packages=['ultimo'],
-    install_requires=['pandas', 'numpy', 'geopandas', 'shapely', 'osmnx', 'networkx', 'itertools', 'tqdm', 'requests', 'sklearn', 'scipy', 'warnings', 'datetime']
+    install_requires=['pandas', 'numpy', 'geopandas', 'shapely', 'osmnx', 'networkx', 'tqdm', 'requests', 'sklearn', 'scipy']
 )
