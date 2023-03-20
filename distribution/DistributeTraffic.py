@@ -185,10 +185,15 @@ class TargetValues:
 
         return {"short": unit * short_, "long": unit * long_, "int": unit * int_, "trans": unit * trans_}
 
-    def targets_freight_transport(self, cn, target_col='car_pkm', segments=None, shares_tkm=None, loads_t=None, unit=1.e+6):
+    def targets_freight_transport(self, cn, target_col='freight_tkm', segments=None, shares_tkm=None, loads_t=None, seg_split=None, unit=1.e+6):
         """
         Calculate VKT and trips for the segments short and long distance (national) and international freight transport for a country
 
+        !! Long-distance and international freight transport only cover 1 segment (heavy weight transport)
+        !! Short-distance freight transport can cover multiple segments, inlcuding the long-distance segment (heavy weight transport)
+        !! The distribution of tkm among segments is given with the shares_tkm parameter, short-distance tkm are then further spread among these segments
+
+        @param seg_split: freight transport segment where there is traffic in all categories (short, long, international)
         @param cn: str, country code
         @param target_col: str, name of column in self.country_layer with the total transport volume in tkm
         @param segments: None or list, names of freight transport segments; default None refers to ['lcv', 'mft', 'hft']
@@ -202,11 +207,13 @@ class TargetValues:
             shares_tkm = {'lcv': 0.08, 'mft': 0.09, 'hft': 0.83}
         if loads_t is None:
             loads_t = {'lcv': 0.5, 'mft': 3, 'hft': 10}
+        if seg_split is None:
+            seg_split = 'hft'
         if segments is None:
             segments = shares_tkm.keys()
 
         # check if segments, loads and shares match
-        if (sorted(segments) == sorted(shares_tkm.keys())) & (sorted(segments) == sorted(loads_t.keys())):
+        if (sorted(segments) == sorted(shares_tkm.keys())) & (sorted(segments) == sorted(loads_t.keys())) & (seg_split in segments):
 
             target = float(self.country_layer.loc[self.country_layer[self.cn_col] == cn, target_col])
 
@@ -260,22 +267,38 @@ class TargetValues:
             tkm_transit = t_tra * dis_transit
             tkm = sum([tkm_imex, tkm_short, tkm_long, tkm_transit])
 
-            # transform tkm t vkm by using average tkm shares and average load
-            lcv = shares_tkm['lcv'] * tkm / tkm_short
-            mft = shares_tkm['mft'] * tkm / tkm_short
-            hft = (shares_tkm['hft'] * tkm - (tkm - tkm_short)) / tkm_short
+            tkm_dict = {'short': tkm_short, 'long': tkm_long}
 
-            # vkm
-            vkm_lcv = (tkm_short * lcv) / loads_t['lcv']
-            vkm_mft = (tkm_short * mft) / loads_t['mft']
-            vkm_hft = (tkm_short * hft) / loads_t['hft']
-            vkm_short = vkm_lcv + vkm_mft + vkm_hft
-            vkm_long = tkm_long / 10
-            vkm_imex = tkm_imex / 10
+            # transform tkm to vkm by using average tkm shares and average load
+            # short distance transport: split into vehicle segments
+            vkm_short_segments = {}
+            for s in segments:
+                # total
+                tkm_s = shares_tkm[s] * tkm
+                # short distance only segments
+                if s != seg_split:
+                    vkm_ts = tkm_s / loads_t[s]
+                else:
+                    # determine short distance tkm
+                    tkm_s_short = tkm_s - (tkm - tkm_short)
+                    vkm_ts = tkm_s_short / loads_t[s]
+                vkm_short_segments.update({s: vkm_ts * unit})
+            vkm_short = sum([vkm_short_segments[s] for s in segments])
 
-            return {"lcv": unit * vkm_lcv,"mft": unit * vkm_mft,"hft": unit * vkm_hft,"trips_short": vkm_short / dis_short,
-                    "long": unit * vkm_long,"trips_long": unit * (vkm_long/dis_long),"int": unit * vkm_imex,
-                    "trips_int": unit * (vkm_imex/dis_long),"trans": unit * (tkm_transit/loads_t['hft']), 'trips_trans': unit*((tkm_transit/loads_t['hft'])/ dis_transit)}
+            # vkm long-distance and international
+            vkm_long = tkm_long / loads_t[seg_split] * unit
+            vkm_imex = tkm_imex / loads_t[seg_split] * unit
+            vkm_transit = tkm_transit / loads_t[seg_split] * unit
+
+            # result dictionary
+            result = {'short': vkm_short, 'trips_short': vkm_short / dis_short,
+                      'long': vkm_long, 'trips_long': vkm_long / dis_long,
+                      'int': vkm_imex, 'trips_int': vkm_imex / dis_long,
+                      'transit': vkm_transit}
+
+            result.update({'short_segments_vkm': vkm_short_segments})
+
+            return result
         else:
             raise KeyError('Segments and shares / loads do not match!')
 
@@ -331,7 +354,7 @@ class GravityModel:
         mx_int[mx_fil > 1] = 9.e+12
         return mx_int
 
-    def trip_distribution_pt(self, target, cn=None, taz_pop='population', alpha=0.5, gamma=-2.75, unit_dis=1000, mob_rate=36.):
+    def trip_distribution_pt(self, target, cn=None, taz_pop='population', alpha=0.5, gamma=-2.75, unit_dis=1000, unit_tt = 60, mob_rate=36., occ_rate=1.3):
         """
         Distribute personal transport using a gravity model and an input for total VKT
         Gravity model parameters are given as defaults and were estimated using the German NHTS MiD 2017
@@ -342,7 +365,9 @@ class GravityModel:
         @param alpha: float, alpha parameter in gravity model, default 0.5
         @param gamma: float, gamma parameter in gravity model, default -2.75
         @param unit_dis: int or float, factor to transform unit in distance matrix to km, default 1000 (suggesting distance is in m)
+        @param unit_tt: factor to transform unit in travel time matrix to min, default 60 (suggesting distance is in s)
         @param mob_rate: float, mobility rate of inhabitants, default 36
+        @param occ_rate: average vehicle occupancy
         @return: np.array with OD trip matrix
         """
         if cn is not None:
@@ -351,6 +376,11 @@ class GravityModel:
             taz = self.taz
             mtx = self.matrix_international()
             #mtx[mtx==9.e+12] = 0
+
+        # transform units in mtx to min, km
+        mtx[:, :, 0] /= unit_tt
+        mtx[:, :, 1] /= unit_dis
+
         # trip generation
         taz['pt_goal'] = taz[taz_pop] * mob_rate
 
@@ -368,14 +398,17 @@ class GravityModel:
         # choice probabilities and trips
         mx_trips = get_trip_matrix(mx_grav, taz, 'pt_goal', taz_id='id')
         # scaling to match target
-        vkt = (mx_trips*mtx[:, :, 1]).sum()/unit_dis
+        vkt = (mx_trips*mtx[:, :, 1]).sum()
         scale_fac = target / vkt
-        print('Scaling factor for {}: {}'.format(cn, scale_fac))
+        print('Scaling factor personal transport for {}: {}'.format(cn, scale_fac))
         mx_trips *= scale_fac
+
+        # transform person trips to vehicle trips
+        mx_trips /= occ_rate
 
         return mx_trips
 
-    def trip_distribution_ft(self, target_trips, target_vkt=None, cn=None, beta=0.00421, unit_dis=1000, trips_key=''):
+    def trip_distribution_ft(self, target_trips, target_vkt=None, cn=None, beta=0.00421, unit_tt=60, unit_dis=1000, trips_key=''):
         """
         Distribute freight transport using a gravity model and an input for total trips and VKT
         Gravity model parameters are given as defaults and were estimated using microscopic truck data for Germany
@@ -384,6 +417,7 @@ class GravityModel:
         @param cn: None or str, country code; default None means all countries in self.taz are included
         @param beta: float, gamma parameter in gravity model, default 0.00421
         @param unit_dis: int or float, factor to transform unit in distance matrix to km, default 1000 (suggesting distance is in m)
+        @param unit_tt: factor to transform unit in travel time matrix to min, default 60 (suggesting distance is in s)
         @param trips_key: str, key for segment if cn is None target_trips is dict
         @return: np.array with OD trip matrix
         """
@@ -399,9 +433,10 @@ class GravityModel:
             index_col = 'index_int'
             if t_targ != dict:
                 raise ValueError('target_trips has to be dict if cn is None, is {}'.format(t_targ))
-        if unit_dis == 1000:
-            # assure distance matrix is in km
-            mtx[:, :, 1] /= 1000
+
+        # transform units in mtx to min, km
+        mtx[:, :, 0] /= unit_tt
+        mtx[:, :, 1] /= unit_dis
 
         # trip generation
         if cn is not None:
@@ -430,9 +465,9 @@ class GravityModel:
 
         if target_vkt is not None:
             # determine relation to target
-            vkt = (mx_trips * mtx[:, :, 1]).sum() / unit_dis
+            vkt = (mx_trips * mtx[:, :, 1]).sum()
             scale_fac = target_vkt / vkt
-            print('Relation to target vkm for {}: {}'.format(cn, scale_fac))
+            print('Freight transport gravity model result for {}: Relation to target vkm {}'.format(cn, scale_fac))
 
         return mx_trips
 
@@ -458,7 +493,7 @@ class IntraZonal:
         self.link_id = link_id
 
     def road_type_weighted_single(self, target, weights=None, veh_types=None, taz_id='nuts_id',
-                                  index='population', sub_len='length', net_type='type'):
+                                  index='population', sub_len='length_sub', net_type='type', occ_rate=1.):
         """
         Distribute total VKT per TAZ and assign loads to roads within this TAZ, weighted by road type
 
@@ -469,6 +504,7 @@ class IntraZonal:
         @param index: str, name of column with attraction index to be used for trip generation in self.taz, defaults to 'population'
         @param sub_len: str, name of column with length of subordinate network in self.taz, defaults to 'length'
         @param net_type: str, name of column with road type in self.net, defaults to 'type'
+        @param occ_rate: average vehicle occupancy (applied for personal transport, i.e. if veh_type == 'car')
         @return: gpd.GeoDataFrame or pd.DataFrame for network with traffic loads, taz with subordinate network VKT
         """
         if weights is None:
@@ -512,6 +548,10 @@ class IntraZonal:
 
             vkt_p_p = target[veh_type] / self.taz[index].sum()
 
+            if veh_type == 'car':
+                # apply occupancy rate
+                vkt_p_p /= occ_rate
+
             # calculate vkt per taz
             taz_2['goal_taz_{}'.format(veh_type)] = taz_2[index] * vkt_p_p
             taz_2['goal_norm_{}'.format(veh_type)] = taz_2['goal_taz_{}'.format(veh_type)] / taz_2['sum_weighted_length']
@@ -533,8 +573,8 @@ class IntraZonal:
         return net, taz_result
 
     def road_type_weighted_multiple(self, target, matrix_dis, veh_types=None, weights=None, taz_id='nuts_id', taz_mx_id='id',
-                                    index='index_nat', sub_len='length', net_type='type', distance=55, cell_size=500,
-                                    fac_cell=1.5):
+                                    index='index_nat', sub_len='length_sub', net_type='type', distance=55, cell_size=500,
+                                    fac_cell=1.5, occ_rate=1.):
         """
         Distribute total VKT per TAZ and assign loads to roads within this TAZ and surrounding TAZ, weighted by road type
 
@@ -550,6 +590,7 @@ class IntraZonal:
         @param distance: float, max distance between TAZ to be included in km, defaults to 55km
         @param cell_size: float, max cell size of TAZ to force inclusion of surrounding TAZ, defaults to 500km²
         @param fac_cell: float, factor to apply to main TAZ during distribution, defaults to 1.5
+        @param occ_rate: average vehicle occupancy (applied for personal transport, i.e. if veh_type == 'car')
         @return: gpd.GeoDataFrame or pd.DataFrame for network with traffic loads, taz with subordinate network VKT
         """
 
@@ -563,6 +604,9 @@ class IntraZonal:
         taz_2 = self.taz[[taz_id, taz_mx_id, index, 'area', sub_len]].copy()
         for veh_type in veh_types:
             taz_2[veh_type] = taz_2[index] / taz_2[index].sum() * target[veh_type]
+            if veh_type == 'car':
+                # apply occupancy rate
+                taz_2[veh_type] /= occ_rate
             net['{}_short'.format(veh_type)] = 0
             taz_2['{}_sub'.format(veh_type)] = 0
 
@@ -609,7 +653,10 @@ class IntraZonal:
                 taz_2.loc[taz_2[taz_id].isin(sur_ids_taz), '{}_sub'.format(veh_type)] += taz_2.loc[taz_2[taz_id].isin(sur_ids_taz), 'weight2'] * taz_veh * taz_2.loc[taz_2[taz_id].isin(sur_ids_taz), sub_len]
 
         net.drop(columns=['weight', 'weight2', 'weighted_length', 'weighted_length2'], inplace=True)
-        taz_2.drop(columns=['weight2', 'weighted_sub', 'weighted_sub2'], inplace=True)
+
+        cols_keep = ['{}_sub'.format(veh_type) for veh_type in veh_types]
+        cols_keep.extend([taz_id])
+        taz_2 = taz_2[cols_keep]
 
         return net, taz_2
 
