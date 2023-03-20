@@ -28,5 +28,5 @@ setuptools.setup(
     },
     license='BSD',
     packages=['ultimo'],
-    install_requires=['pandas', 'numpy', 'geopandas', 'shapely', 'osmnx', 'networkx', 'tqdm', 'requests', 'sklearn', 'scipy']
+    install_requires=['pandas', 'numpy', 'geopandas', 'shapely', 'osmnx', 'networkx', 'tqdm', 'requests', 'scikit-learn', 'scipy']
 )
