@@ -11,7 +11,6 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 import osmnx as ox
-from datetime import datetime
 import warnings
 from shapely.errors import ShapelyDeprecationWarning
 from tqdm import tqdm

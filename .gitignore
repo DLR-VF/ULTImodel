@@ -1,16 +1,6 @@
-*.Rproj.user
-*.Rhistory
-*.RData
-*.Ruserdata
 *.ipynb_checkpoints
 *.idea
-*_files
 *nb.html
-.Rproj.user
-**/_shapes
-**/_output
-*.gpkg
-**/_grids
 
 *.cpg
 *.dbf
@@ -19,13 +9,4 @@
 *.shx
 *.qpj
 
-*.mtx
-*.att
-
-config.yml
-
-<<<<<<< .gitignore
-.idea/*
-
-cache/**
->>>>>>> .gitignore
+cache/*
