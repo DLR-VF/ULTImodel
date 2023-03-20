@@ -7,21 +7,21 @@
 # @brief __init__.py file for ULTIMO
 # =========================================================
 
-import ultimo.network.CreateNetwork as CreateNetwork
-from ultimo.network.CreateNetwork import Edges
-from ultimo.network.CreateNetwork import Nodes
-from ultimo.network.CreateNetwork import Connectors
-from ultimo.network.CreateNetwork import CombineNetworks
-from ultimo.network.CreateNetwork import Ferries
+import network.CreateNetwork as CreateNetwork
+from network.CreateNetwork import Edges
+from network.CreateNetwork import Nodes
+from network.CreateNetwork import Connectors
+from network.CreateNetwork import CombineNetworks
+from network.CreateNetwork import Ferries
 
-import ultimo.generationData.Matrices as Matrices
-from ultimo.generationData.Matrices import Matrix
+import generationData.Matrices as Matrices
+from generationData.Matrices import Matrix
 
-import ultimo.generationData.AttractionFactors as AttractionFactors
-from ultimo.generationData.AttractionFactors import AttractionIndex
-from ultimo.generationData.AttractionFactors import BorderCrossingAtts
+import generationData.AttractionFactors as AttractionFactors
+from generationData.AttractionFactors import AttractionIndex
+from generationData.AttractionFactors import BorderCrossingAtts
 
-import ultimo.distribution.DistributeTraffic as DistributeTraffic
-from ultimo.distribution.DistributeTraffic import TargetValues
-from ultimo.distribution.DistributeTraffic import GravityModel
-from ultimo.distribution.DistributeTraffic import IntraZonal
+import distribution.DistributeTraffic as DistributeTraffic
+from distribution.DistributeTraffic import TargetValues
+from distribution.DistributeTraffic import GravityModel
+from distribution.DistributeTraffic import IntraZonal
