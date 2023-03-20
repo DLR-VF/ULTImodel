@@ -185,10 +185,15 @@ class TargetValues:
 
         return {"short": unit * short_, "long": unit * long_, "int": unit * int_, "trans": unit * trans_}
 
-    def targets_freight_transport(self, cn, target_col='freight_tkm', segments=None, shares_tkm=None, loads_t=None, unit=1.e+6):
+    def targets_freight_transport(self, cn, target_col='freight_tkm', segments=None, shares_tkm=None, loads_t=None, seg_split=None, unit=1.e+6):
         """
         Calculate VKT and trips for the segments short and long distance (national) and international freight transport for a country
 
+        !! Long-distance and international freight transport only cover 1 segment (heavy weight transport)
+        !! Short-distance freight transport can cover multiple segments, inlcuding the long-distance segment (heavy weight transport)
+        !! The distribution of tkm among segments is given with the shares_tkm parameter, short-distance tkm are then further spread among these segments
+
+        @param seg_split: freight transport segment where there is traffic in all categories (short, long, international)
         @param cn: str, country code
         @param target_col: str, name of column in self.country_layer with the total transport volume in tkm
         @param segments: None or list, names of freight transport segments; default None refers to ['lcv', 'mft', 'hft']
@@ -202,11 +207,13 @@ class TargetValues:
             shares_tkm = {'lcv': 0.08, 'mft': 0.09, 'hft': 0.83}
         if loads_t is None:
             loads_t = {'lcv': 0.5, 'mft': 3, 'hft': 10}
+        if seg_split is None:
+            seg_split = 'hft'
         if segments is None:
             segments = shares_tkm.keys()
 
         # check if segments, loads and shares match
-        if (sorted(segments) == sorted(shares_tkm.keys())) & (sorted(segments) == sorted(loads_t.keys())):
+        if (sorted(segments) == sorted(shares_tkm.keys())) & (sorted(segments) == sorted(loads_t.keys())) & (seg_split in segments):
 
             target = float(self.country_layer.loc[self.country_layer[self.cn_col] == cn, target_col])
 
@@ -260,22 +267,38 @@ class TargetValues:
             tkm_transit = t_tra * dis_transit
             tkm = sum([tkm_imex, tkm_short, tkm_long, tkm_transit])
 
+            tkm_dict = {'short': tkm_short, 'long': tkm_long}
+
             # transform tkm to vkm by using average tkm shares and average load
-            lcv = shares_tkm['lcv'] * tkm / tkm_short
-            mft = shares_tkm['mft'] * tkm / tkm_short
-            hft = (shares_tkm['hft'] * tkm - (tkm - tkm_short)) / tkm_short
+            # short distance transport: split into vehicle segments
+            vkm_short_segments = {}
+            for s in segments:
+                # total
+                tkm_s = shares_tkm[s] * tkm
+                # short distance only segments
+                if s != seg_split:
+                    vkm_ts = tkm_s / loads_t[s]
+                else:
+                    # determine short distance tkm
+                    tkm_s_short = tkm_s - (tkm - tkm_short)
+                    vkm_ts = tkm_s_short / loads_t[s]
+                vkm_short_segments.update({s: vkm_ts * unit})
+            vkm_short = sum([vkm_short_segments[s] for s in segments])
 
-            # vkm
-            vkm_lcv = (tkm_short * lcv) / loads_t['lcv']
-            vkm_mft = (tkm_short * mft) / loads_t['mft']
-            vkm_hft = (tkm_short * hft) / loads_t['hft']
-            vkm_short = vkm_lcv + vkm_mft + vkm_hft
-            vkm_long = tkm_long / loads_t['hft']
-            vkm_imex = tkm_imex / loads_t['hft']
+            # vkm long-distance and international
+            vkm_long = tkm_long / loads_t[seg_split] * unit
+            vkm_imex = tkm_imex / loads_t[seg_split] * unit
+            vkm_transit = tkm_transit / loads_t[seg_split] * unit
 
-            return {"lcv": unit * vkm_lcv,"mft": unit * vkm_mft,"hft": unit * vkm_hft,"trips_short": unit * vkm_short / dis_short,
-                    "long": unit * vkm_long,"trips_long": unit * (vkm_long/dis_long), "int": unit * vkm_imex,
-                    "trips_int": unit * (vkm_imex/dis_long),"trans": unit * (tkm_transit/loads_t['hft']), 'trips_trans': unit*((tkm_transit/loads_t['hft'])/ dis_transit)}
+            # result dictionary
+            result = {'short': vkm_short, 'trips_short': vkm_short / dis_short,
+                      'long': vkm_long, 'trips_long': vkm_long / dis_long,
+                      'int': vkm_imex, 'trips_int': vkm_imex / dis_long,
+                      'transit': vkm_transit}
+
+            result.update({'short_segments_vkm': vkm_short_segments})
+
+            return result
         else:
             raise KeyError('Segments and shares / loads do not match!')
 
@@ -470,7 +493,7 @@ class IntraZonal:
         self.link_id = link_id
 
     def road_type_weighted_single(self, target, weights=None, veh_types=None, taz_id='nuts_id',
-                                  index='population', sub_len='length', net_type='type', occ_rate=1.):
+                                  index='population', sub_len='length_sub', net_type='type', occ_rate=1.):
         """
         Distribute total VKT per TAZ and assign loads to roads within this TAZ, weighted by road type
 
@@ -550,7 +573,7 @@ class IntraZonal:
         return net, taz_result
 
     def road_type_weighted_multiple(self, target, matrix_dis, veh_types=None, weights=None, taz_id='nuts_id', taz_mx_id='id',
-                                    index='index_nat', sub_len='length', net_type='type', distance=55, cell_size=500,
+                                    index='index_nat', sub_len='length_sub', net_type='type', distance=55, cell_size=500,
                                     fac_cell=1.5, occ_rate=1.):
         """
         Distribute total VKT per TAZ and assign loads to roads within this TAZ and surrounding TAZ, weighted by road type
