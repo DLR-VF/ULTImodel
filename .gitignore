@@ -9,4 +9,4 @@
 *.shx
 *.qpj
 
-cache/*
+*cache*
