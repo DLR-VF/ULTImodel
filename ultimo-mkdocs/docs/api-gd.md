@@ -1,10 +1,10 @@
-generationData
+Generation and distribution factors
 ===
 
-::: generationData.AttractionFactors
+::: AttractionFactors
     filters: [""]
     show_source: False
 
-::: generationData.Matrices
+::: Matrices
     filters: [""]
     show_source: False

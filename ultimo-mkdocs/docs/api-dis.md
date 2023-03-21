@@ -1,6 +1,6 @@
-distribution
+Distribution
 ===
 
-::: distribution.DistributeTraffic
+::: DistributeTraffic
     filters: [""]
     show_source: False
