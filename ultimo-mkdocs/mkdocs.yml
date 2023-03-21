@@ -17,7 +17,11 @@ nav:
     - Home: index.md
     - TODO Installation: install.md
     - Usage: use.md
-    - Examples: example.md
+    - Examples:
+        - Network: example-net.md
+        - Cost matrix: example-cost.md
+        - Trip Distibution: example-dis.md
+        - Tutorials: tutorials.md
     - API:
         - ultimo.network: api-network.md
         - ultimo.generationData: api-gd.md

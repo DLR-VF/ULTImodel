@@ -1,6 +1,6 @@
-network
+Network
 ===
 
-::: network.CreateNetwork
+::: CreateNetwork
     filters: [""]
     show_source: False

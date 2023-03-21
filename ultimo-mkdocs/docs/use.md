@@ -44,7 +44,7 @@ ULTIMO differentiates between 4 transport types:
 |short distance | import-export (incoming, outgoing)|
 |long distance|transit|
 
-![Types](../images/scheme_types.png "Types")
+![Types](images/scheme_types.png "Types")
 
 __National long-distance travel__
 
@@ -88,6 +88,30 @@ leading to a total of four modes:
 While determining the target VKT, tkm shares and average loads per segment are regarded. They
 can be adjusted as part of the `target` method.
 
+## Target values
+
+ULTIMO uses target values in the form of person kilometers traveled (__PKT__) and tonne kilometers
+(__tkm__) on a national scale. These have to be provided as an external input and are currently
+not calculated as part of the model. They include all travel volumes within a country, i.e
+national travel by national and international vehicles.
+
+For the distribution of the different modes and transport types, the total travel volumes
+are split among the different types (national long- and short-distance, international OD 
+and transit). This is based on a categorization of countries based on geospatial attributes
+influencing border-crossing road-based transport, like the share of land borders or number 
+of neighbor countries. 
+
+For freight transport, average travel distances for the transport types are derived based 
+on a country's area. Further, the share of different vehicle categories (like light, medium and
+heavy freight vehicles) and their respective loads are used to generate total vehicle trips
+per segment. The vehicle types and their shares and loads can be defined in the function 
+parameters. As a result, transport type targets fo freight are transformed to vehicle kilometers
+traveled (__VKT__) and trips.
+
+Personal transport type targets are given in PKT (i.e. the unit of the overall input target) and
+transformed to vehicle kilometers traveled (__VKT__) using occupancy rates in the distribution
+functions.
+
 ## Gravity model structure
 
 The main structure of the gravity model for long distance and international transport can be described as
@@ -108,7 +132,7 @@ less attractive. In the cost function, ![c_{ij}](https://latex.codecogs.com/svg.
 between the cells i and j. The ![\beta](https://latex.codecogs.com/svg.image?\beta) and ![\gamma](https://latex.codecogs.com/svg.image?\gamma) 
 parameters can be estimated using trip distance distributions.
 
-__Attraction index__
+### Attraction index
 
 ULTIMO offers to calculate population per TAZ based on a point layer, which can be used as attraction factors. Furthermore,
 there is another function available extracting industrial areas from OSM and combining them with population to form an 
@@ -131,5 +155,22 @@ with
 The values for population, industrial area and number of industrial sites are the relative values compared to the mean of
 the regarded region.
 
+### Trip generation
 
+With the result of the gravity model being an OD trip matrix, we need a number of trips to distribute.
+Currently this is done in two different ways for personal and freight transport. 
 
+__Personal transport__
+
+For personal transport, the population of each TAZ is multiplied with a mobility rate to derive
+total trips per cell. The mobility rate is an input parameter of the distribution function 
+and can be calibrated using trip data sets. After distributing the trips, the total VKT is
+calculated using the trip and distance matrix. Then, a scaling factor is applied to the trip
+matrix to match the target VKT.
+
+__Freight transport__
+
+For freight transport, the total number of trips based on the target tonne-kilometers is derived
+using average loads and trips distances. To generate trips per TAZ, the attraction index per
+TAZ is used to derive an attraction share for each TAZ. This is then multiplied with the total
+number of trips to generate trips per TAZ.
