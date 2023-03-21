@@ -7,11 +7,12 @@
 # @brief generate attraction factors per TAZ and country attributes
 # =========================================================
 
-import numpy as np
-import pandas as pd
-import geopandas as gpd
-import osmnx as ox
 import warnings
+
+import geopandas as gpd
+import numpy as np
+import osmnx as ox
+import pandas as pd
 from shapely.errors import ShapelyDeprecationWarning
 from tqdm import tqdm
 

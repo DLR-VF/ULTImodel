@@ -12,9 +12,14 @@ import setuptools
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
+'''
+import required packages from requirements file
+with open("requirements.txt") as f:
+    INSTALL_REQUIRES = [line.strip() for line in f.readlines()]'''
+
 setuptools.setup(
     name='ultimo',
-    version='1.0',
+    version='1.0.1',
     author='German Aerospace Center - DLR (Nina Thomsen)',
     author_email='nina.thomsen@dlr.de',
     description='Universal transport distribution model',

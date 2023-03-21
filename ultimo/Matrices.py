@@ -7,12 +7,13 @@
 # @brief generate travel time and distance matrices between points
 # =========================================================
 
+import time
+from datetime import datetime
+
+import geopandas as gpd
 import numpy as np
 import pandas as pd
-import geopandas as gpd
-from datetime import datetime
 import requests
-import time
 from tqdm import tqdm
 
 
