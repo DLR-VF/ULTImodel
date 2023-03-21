@@ -8,11 +8,12 @@
 #        Assign inner cell traffic to network links
 # =========================================================
 
-import pandas as pd
-import numpy as np
-import networkx as nx
 import itertools
+
+import networkx as nx
+import numpy as np
 import osmnx as ox
+import pandas as pd
 
 
 def pt_shares_int(a, b):

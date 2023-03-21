@@ -19,7 +19,7 @@ with open("requirements.txt") as f:
 
 setuptools.setup(
     name='ultimo',
-    version='1.0',
+    version='1.0.1',
     author='German Aerospace Center - DLR (Nina Thomsen)',
     author_email='nina.thomsen@dlr.de',
     description='Universal transport distribution model',

@@ -7,20 +7,19 @@
 # @brief Creates nodes between edges
 # =========================================================
 
+import warnings
 from datetime import datetime
-from tqdm import tqdm
 
 import geopandas as gpd
-import pandas as pd
-from sklearn.cluster import KMeans
-from shapely.geometry import Point, LineString, MultiPolygon
+import networkx as nx
 import numpy as np
 import osmnx as ox
-import networkx as nx
+import pandas as pd
 from scipy.spatial import cKDTree
-
-import warnings
 from shapely.errors import ShapelyDeprecationWarning
+from shapely.geometry import Point, LineString
+from sklearn.cluster import KMeans
+from tqdm import tqdm
 
 
 def ckdnearest(gdA, gdB, bcolA, bcolB, n):
