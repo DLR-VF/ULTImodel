@@ -1,6 +1,6 @@
 # Distribution
 
-The distribution in ULTIMO is performed with `distribution.DistributeTraffic`.
+The distribution in **ULTImodel** is performed with `distribution.DistributeTraffic`.
 
 ## Target values
 
