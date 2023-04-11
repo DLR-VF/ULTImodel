@@ -1,4 +1,4 @@
-# Usage
+# Model description
 
 ULTImodel modules can be imported as functions in python scripts. Following the described 
 model steps, ULTImodel produces:
