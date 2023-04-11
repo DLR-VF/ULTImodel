@@ -14,7 +14,7 @@ __conda__
 conda install -c conda-forge ultimodel
 ```
 
-You may __download a copy or fork the code__ at [ULTImodel&apos;s github page](link-to-github).
+You may __download a copy or fork the code__ at [ULTImodel&apos;s github page](https://github.com/DLR-VF/ULTImodel).
 
 Besides, you may __download the current release__ here:
 
