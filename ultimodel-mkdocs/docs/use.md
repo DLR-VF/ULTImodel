@@ -1,7 +1,7 @@
 # Model description
 
 ULTImodel modules can be imported as functions in python scripts. Following the described 
-model steps, ULTImodel produces:
+model steps, **ULTImodel** produces:
 
 * an OD-Matrix in the form of an `np.array` for long-distance transport 
 * a `gpd.GeoDataFrame` with network loads for short-distance transport 
@@ -37,7 +37,7 @@ __Distribution Module__
 
 ## Transport types
 
-ULTImodel differentiates between 4 transport types:
+**ULTImodel** differentiates between 4 transport types:
 
 | National | International |
 |---|---|
@@ -59,7 +59,7 @@ distribution functions is currently not flexible.
 
 __National short-distance travel__
 
-In ULTImodel, short-distance trips are defined as inner cell trips. In order to distribute these,
+In **ULTImodel**, short-distance trips are defined as inner cell trips. In order to distribute these,
 there are two different options:
 
 * Equal distribution on the road network, weighted by road type
@@ -76,7 +76,7 @@ The result is an OD trip matrix as `np.array`, which can be assigned to the road
 using traffic assignment software.
 
 ## Modes
-Currently, ULTImodel is calibrated to distribute road-based transport. There, both personal and 
+Currently, **ULTImodel** is calibrated to distribute road-based transport. There, both personal and 
 freight transport are regarded. Freight transport is further split into the three segments,
 leading to a total of four modes:
 
@@ -90,9 +90,7 @@ can be adjusted as part of the `target` method.
 
 ## Target values
 
-ULTImodel uses target values in the form of person kilometers traveled (__PKT__) and tonne kilometers
-(__tkm__) on a national scale. These have to be provided as an external input and are currently
-not calculated as part of the model. They include all travel volumes within a country, i.e
+**ULTImodel** uses target values in the form of person kilometers traveled (__PKT__) and tonne kilometers (__tkm__) on a national scale. These have to be provided as an external input and are currently not calculated as part of the model. They include all travel volumes within a country, i.e
 national travel by national and international vehicles.
 
 For the distribution of the different modes and transport types, the total travel volumes
@@ -134,9 +132,7 @@ parameters can be estimated using trip distance distributions.
 
 ### Attraction index
 
-ULTImodel offers to calculate population per TAZ based on a point layer, which can be used as attraction factors. Furthermore,
-there is another function available extracting industrial areas from OSM and combining them with population to form an 
-attraction index. The index is calculated with a Cobb-Douglas function:
+**ULTImodel** offers to calculate population per TAZ based on a point layer, which can be used as attraction factors. Furthermore, there is another function available extracting industrial areas from OSM and combining them with population to form an attraction index. The index is calculated with a Cobb-Douglas function:
 
 ![I_{ij} = \beta * pop^{\alpha_{1}} * A_{ind}^{\alpha_{2}} * n_{ind}^{\alpha_{3}}](https://latex.codecogs.com/svg.image?I_{ij}&space;=&space;\beta&space;*&space;pop^{\alpha_{1}}&space;*&space;A_{ind}^{\alpha_{2}}&space;*&space;n_{ind}^{\alpha_{3}}&space;)
 
