@@ -1,9 +1,11 @@
 # ULTImodel
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/DLR-VF/ULTImodel/blob/master/LICENSE)
-[![Documentation Status](link-to-readthedocs)](link-to.readthedocs)
-
-A universal transport distribution model based on OSM
+[![PyPI version](https://badge.fury.io/py/ultimodel.svg)](https://pypi.python.org/pypi/ultimodel)
+[![Documentation Status](https://readthedocs.org/projects/ultimodel/badge/?version=latest)](https://ultimodel.readthedocs.io/en/latest/?badge=latest)
+[![Cite-us](https://img.shields.io/badge/doi-10.5281%2Fzenodo.7817425-blue)](https://doi.org/10.5281/zenodo.7817425)
+ 
+A universal transport distribution model based on open data
 
 ## Description
 Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
