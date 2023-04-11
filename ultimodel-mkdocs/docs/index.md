@@ -1,19 +1,21 @@
-# ULTImodeldel
+# ULTImodel
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://gitlab.dlr.de/ULTImodel/ULTImodel-release/-/blob/dfb7fc0465d6a36e1029a93050a1bdee710078c2/LICENSE)
-[![PyPI version]()](link-to-pypi)
-[![Documentation Status](link-to-readthedocs)](link-to.readthedocs)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/DLR-VF/ULTImodel/blob/master/LICENSE)
+[![PyPI version](https://badge.fury.io/py/ultimodel.svg)](https://pypi.python.org/pypi/ultimodel)
+[![Documentation Status](https://readthedocs.org/projects/ultimodel/badge/?version=latest)](https://ultimodel.readthedocs.io/en/latest/?badge=latest)
+[![Cite-us](https://img.shields.io/badge/doi-10.5281%2Fzenodo.7817425-blue)](https://doi.org/10.5281/zenodo.7817425)
 
-ULTImodel &mdash; A universal transport distribution model.
+ULTImodel &mdash; A universal transport distribution model written in Python.
 
 ## Introduction
 
-ULTImodel is a distribution model that helps to spatially distribute road-based transport for countries, including 
-border-crossing travel. It is set up using open data like [OSM](https://openstreetmap.org).
+ULTImodel is a distribution model that helps to spatially distribute road-based transport for countries, including border-crossing travel. It is set up using open data like [OSM](https://openstreetmap.org).
 The software includes modules for network generation, trip generation and trip distribution based on two main inputs:
 
 * Georeferenced traffic analysis zones (TAZ) for the respective region
 * Target value for national transport volume (i.e. person-kilometres or tonne-kilometres)
+
+![Prim_Sec](ultimodel-mkdocs/docs/images/readme_visual_fr.png "Results of distribution and secondary model")
 
 ## Background
 
