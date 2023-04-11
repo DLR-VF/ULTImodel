@@ -10,3 +10,6 @@ scikit-learn
 scipy
 jinja2==3.0.3
 mkdocs
+mkdocs-material
+mkdocstrings-python
+mkdocstrings
