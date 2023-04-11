@@ -5,10 +5,10 @@
 [![Documentation Status](https://readthedocs.org/projects/ultimodel/badge/?version=latest)](https://ultimodel.readthedocs.io/en/latest/?badge=latest)
 [![Cite-us](https://img.shields.io/badge/doi-10.5281%2Fzenodo.7817425-blue)](https://doi.org/10.5281/zenodo.7817425)
  
-ULTImodel &mdash; A universal transport distribution model written in Python.
+**ULTImodel** &mdash; A universal transport distribution model written in Python.
 
 ## Description
-ULTImodel is a distribution model that helps to spatially distribute road-based transport for countries, including border-crossing travel. It is set up using open data like [OSM](https://openstreetmap.org).
+**ULTImodel** is a distribution model that helps to spatially distribute road-based transport for countries, including border-crossing travel. It is set up using open data like [OSM](https://openstreetmap.org).
 The software includes modules for network generation, trip generation and trip distribution based on two main inputs:
 
 * Georeferenced traffic analysis zones (TAZ) for the respective region
