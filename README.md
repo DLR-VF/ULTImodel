@@ -40,7 +40,7 @@ Besides, you may __download the current release__ here:
 
 
 ## Usage
-Examples of using **ULTImodel** can be found in the [tutorials folder](https://github.com/DLR-VF/ULTImodel/blob/master/tutorial/).
+Examples of using **ULTImodel** can be found in the [tutorials repository](https://github.com/DLR-VF/ULTImodel-tutorials).
 
 Additional documentation can be found at <https://ultimodel.readthedocs.io/>.
 
