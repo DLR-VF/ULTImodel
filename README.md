@@ -13,7 +13,27 @@ Let people know what your project can do specifically. Provide context and add a
 ![Prim_Sec](ultimodel-mkdocs/docs/images/readme_visual_fr.png "Results of distribution and secondary model")
 
 ## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+
+The __current version__ is [ultimodel-1.0.0](https://github.com/DLR-VF/ULTImodel/releases/tag/1.0.0).
+
+You may __install ULTImodel__ by executing the following
+
+__pip__
+```console
+python -m pip install ultimodel
+```
+__conda__
+```console
+conda install -c conda-forge ultimodel
+```
+
+You may __download a copy or fork the code__ at [ULTImodel&apos;s github page](link-to-github).
+
+Besides, you may __download the current release__ here:
+
+* [ultimodel-1.0.0.zip](https://github.com/DLR-VF/ULTImodel/archive/refs/tags/1.0.0.zip)
+* [ultimodel-1.0.0.tar.gz](https://github.com/DLR-VF/ULTImodel/archive/refs/tags/1.0.0.tar.gz)
+
 
 ## Usage
 Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
