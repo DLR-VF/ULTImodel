@@ -4,7 +4,7 @@
 # @date 21.03.2023
 # @copyright Institut fuer Verkehrsforschung,
 #            Deutsches Zentrum fuer Luft- und Raumfahrt
-# @brief __init__.py file for ULTIMO
+# @brief __init__.py file for ULTImodel
 # =========================================================
 
 '''import .distribution.DistributeTraffic as DistributeTraffic

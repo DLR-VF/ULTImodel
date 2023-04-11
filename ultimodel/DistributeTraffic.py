@@ -23,6 +23,9 @@ def pt_shares_int(a, b):
     :param a: area of country
     :param b: share of land border of country
     :return: dict with international transport shares
+    :type a: float
+    :type b: float
+    :rtype: dict
     """
     # transform area
     a = (np.log((a-(-15000))/6.59)/0.437)-22.69
@@ -38,10 +41,14 @@ def get_trip_matrix(mx_grav, taz, goal_col, taz_id='id'):
     """
     Get trip matrix based on total trips per taz and gravity model matrix
 
-    :param mx_grav: np.array, matrix from gravity model
+    :param mx_grav: matrix from gravity model
     :param taz: gpd.GeoDataFrame or pd.DataFrame with TAZ; needs id column to identify coordinate in mx_grav
-    :param goal_col: str, name of column in taz with total trips per taz
-    :return: np.array, matrix with trips between taz
+    :param goal_col: name of column in taz with total trips per taz
+    :return: matrix with trips between taz
+    :type mx_grav: np.array
+    :type taz: gpd.GeoDataFrame or pd.DataFrame
+    :type goal_col: str
+    :rtype: np.array
     """
     # choice probabilities and trips
     mx_trips = np.zeros(mx_grav.shape)
@@ -62,13 +69,23 @@ def assignment_single(net_g, net, o, d, weight, trips, from_='from_node', to_='t
     Performs a shortest path network assignment between two nodes on a MultiDiGraph based on a specified weight and returns a GeoDataFrame with the resulting network load
     :param net_g: MultiDiGraph with network
     :param net: gpd.GeoDataFrame with network
-    :param o: int, ID of origin node
-    :param d: int, ID of destination node
-    :param weight: str, name of weight attribute; is an attribute of links in net and net_g, e.g. travel time or length
-    :param trips: float, number of vehicle trips to distribute between o and d
-    :param from_: str, name of from node attribute in net, defaults to 'from_node'
-    :param to_: str, name of to node attribute in net, defaults to 'to_node'
+    :param o: ID of origin node
+    :param d: ID of destination node
+    :param weight: name of weight attribute; is an attribute of links in net and net_g, e.g. travel time or length
+    :param trips: number of vehicle trips to distribute between o and d
+    :param from_: name of from node attribute in net, defaults to 'from_node'
+    :param to_: name of to node attribute in net, defaults to 'to_node'
     :return: GeoDataFrame of net with trips on the links, on the path between o and d
+
+    :type net_g: MultiDiGraph
+    :type net: gpd.GeoDataFrame
+    :type o: int
+    :type d: int
+    :type weight: str
+    :type trips: float
+    :type from_: str
+    :type to_: str
+    :rtype: gpd.GeoDataFrame
     """
     path_nodes = ox.distance.shortest_path(net_g, o, d, weight=weight)  # tt or length
     nodes_tuples = [(path_nodes[x], path_nodes[x + 1]) for x in range(len(path_nodes) - 1)]
@@ -86,15 +103,27 @@ def assignment_multiple(net_g, net, o, d, k, weight, trips, from_='from_node', t
     Paths are weighted based on the total weight per path
     :param net_g: MultiDiGraph with network
     :param net: gpd.GeoDataFrame with network
-    :param o: int, ID of origin node
-    :param d: int, ID of destination node
+    :param o: ID of origin node
+    :param d: ID of destination node
     :param k: int, number of paths to find
-    :param weight: str, name of weight attribute; is an attribute of links in net and net_g, e.g. travel time or length
-    :param trips: float, number of vehicle trips to distribute between o and d
-    :param from_: str, name of from node attribute in net, defaults to 'from_node'
-    :param to_: str, name of to node attribute in net, defaults to 'to_node'
-    :param id_: str, name of id attribute in net, defaults to 'link_id'
+    :param weight: name of weight attribute; is an attribute of links in net and net_g, e.g. travel time or length
+    :param trips: number of vehicle trips to distribute between o and d
+    :param from_: name of from node attribute in net, defaults to 'from_node'
+    :param to_: name of to node attribute in net, defaults to 'to_node'
+    :param id_: name of id attribute in net, defaults to 'link_id'
     :return: GeoDataFrame of net with trips on the links, on the path between o and d
+
+    :type net_g: MultiDiGraph
+    :type net: gpd.GeoDataFrame
+    :type o: int
+    :type d: int
+    :type k: int
+    :type weight: str
+    :type trips: float
+    :type from_: str
+    :type to_: str
+    :type id_: str
+    :rtype: gpd.GeoDataFrame
     """
     # transform to digraph for nx.shortest_simple_path function
     dg = nx.DiGraph(net_g)
@@ -125,14 +154,23 @@ def create_network_graph(net_, nodes_, node_id='node_id', node_geo='geometry', n
     """
     Transform a GeoDataFrame of a network and the corresponding nodes to a MultiDiGraph
     Needs columns for node id in nodes, from node, to node and link id in network
-    :param net_: gpd.GeoDataFrame with network
-    :param nodes_: gpd.GeoDataFrame with nodes
-    :param node_id: str, name of id column in nodes_, defaults to 'node_id'
-    :param node_geo: str, name of geometry column in nodes_, defaults to 'geometry'
-    :param net_from: str, name of from node column in net_, defaults to 'from_node'
-    :param net_to: str, name of to node column in net_, defaults to 'to_node'
-    :param net_id: str, name of id column in net_, defaults to 'link_id'
+    :param net_: GeoDataFrame with network
+    :param nodes_: GeoDataFrame with nodes
+    :param node_id: name of id column in nodes_, defaults to 'node_id'
+    :param node_geo: name of geometry column in nodes_, defaults to 'geometry'
+    :param net_from: name of from node column in net_, defaults to 'from_node'
+    :param net_to: name of to node column in net_, defaults to 'to_node'
+    :param net_id: name of id column in net_, defaults to 'link_id'
     :return: MultiDiGraph of net_
+
+    :type net_: gpd.GeoDataFrame
+    :type nodes_: gpd.GeoDataFrame
+    :type node_id: str
+    :type node_geo: str
+    :type net_from: str
+    :type net_to: str
+    :type net_id: str
+    :rtype: MultiDiGraph
     """
     nodes_.set_index(node_id, inplace=True)
     nodes_['x'] = nodes_[node_geo].x
@@ -153,8 +191,10 @@ class TargetValues:
     def __init__(self, country_layer, cn_col='cntr_code'):
         """
 
-        :param country_layer: pd.DataFrame or gpd.GeoDataFrame, countries with target values for raod transport volumes
-        :param cn_col: str, name of column with country code in country layer, default 'cntr_code'
+        :param country_layer: countries with target values for raod transport volumes
+        :param cn_col: name of column with country code in country layer, default 'cntr_code'
+        :type country_layer: pd.DataFrame or gpd.GeoDataFrame
+        :type cn_col: str
         """
         self.country_layer = country_layer
         self.cn_col = cn_col
@@ -163,10 +203,15 @@ class TargetValues:
         """
         Calculate VKT for the segments short and long distance (national) and international personal transport for a country
 
-        :param cn: str, country code
-        :param target_col: str, name of column in self.country_layer with the total transport volume in person kilometers travelled, default 'car_pkm'
-        :param unit: float or int, scaling factor for total transport volume, default 1.e+6
-        :return: dict, vkt per segment
+        :param cn: country code
+        :param target_col: name of column in self.country_layer with the total transport volume in person kilometers travelled, default 'car_pkm'
+        :param unit: scaling factor for total transport volume, default 1.e+6
+        :return: vkt per segment
+
+        :type cn: str
+        :type target_col: str
+        :type unit: float
+        :rtype: dict
         """
         target = float(self.country_layer.loc[self.country_layer[self.cn_col]==cn, target_col])
         shares_int = pt_shares_int(a=float(self.country_layer.loc[self.country_layer[self.cn_col]==cn, 'area']),
@@ -321,7 +366,11 @@ class GravityModel:
 
         :param matrix: np.array with shape [len(taz),len(taz),2], cost matrix with travel times [:,:,0] and distances [:,:,1]
         :param taz: gpd.GeoDataFrame or pd.DataFrame with TAZ
-        :param taz_cn: str, name of column with country code in TAZ
+        :param taz_cn: name of column with country code in TAZ
+
+        :type matrix: np.array
+        :type taz: gpd.GeoDataFrame or pd.DataFrame
+        :type taz_cn: str
         """
         self.matrix = cost_matrix
         self.taz = taz
@@ -330,8 +379,10 @@ class GravityModel:
     def get_country_model(self, cn):
         """
         Get TAZ and cost matrix for country
-        :param cn: str, country code
-        :return: TAZ for country (pd.DataFrame or gpd.GeoDataFrame), cost matrix for country (np.array)
+        :param cn: country code
+        :return: TAZ for country, cost matrix for country
+        :type cn: str
+        :rtype: pd.DataFrame or gpd.GeoDataFrame, np.array
         """
         taz_c = self.taz[self.taz[self.taz_cn] == cn].copy()
         taz_c_ids = taz_c['id']
@@ -349,6 +400,7 @@ class GravityModel:
         Adjust cost matrix for international assignment (no inner country trips) by setting costs for inner country relations to 9.e+12
 
         :return: international cost matrix with travel times and distances
+        :rtype: np.array
         """
         countries = self.taz[self.taz_cn].unique()
         mx_int = self.matrix.copy()
@@ -530,15 +582,15 @@ class IntraZonal:
         """
         Distribute total VKT per TAZ and assign loads to roads within this TAZ, weighted by road type
 
-        @param target: target values for total VKT per vehicle type in the form of {veh_type: target_vkt}
-        @param weights: weights of different road types; default None leads to pd.DataFrame({net_type: [0, 1, 2, 3], 'weight': [0.75, 1.5, 3.5, 3.5]})
-        @param veh_types: names of vehicle types to be considered; default None leads to ['car']
-        @param taz_id: name of column with taz id in self.taz and self.net, defaults to 'nuts_id'
-        @param index: name of column with attraction index to be used for trip generation in self.taz, defaults to 'population'
-        @param sub_len: name of column with length of subordinate network in self.taz, defaults to 'length'
-        @param net_type: name of column with road type in self.net, defaults to 'type'
-        @param occ_rate: average vehicle occupancy (applied for personal transport, i.e. if veh_type == 'car')
-        @return: gpd.GeoDataFrame or pd.DataFrame for network with traffic loads, taz with subordinate network VKT
+        :param target: target values for total VKT per vehicle type in the form of {veh_type: target_vkt}
+        :param weights: weights of different road types; default None leads to pd.DataFrame({net_type: [0, 1, 2, 3], 'weight': [0.75, 1.5, 3.5, 3.5]})
+        :param veh_types: names of vehicle types to be considered; default None leads to ['car']
+        :param taz_id: name of column with taz id in self.taz and self.net, defaults to 'nuts_id'
+        :param index: name of column with attraction index to be used for trip generation in self.taz, defaults to 'population'
+        :param sub_len: name of column with length of subordinate network in self.taz, defaults to 'length'
+        :param net_type: name of column with road type in self.net, defaults to 'type'
+        :param occ_rate: average vehicle occupancy (applied for personal transport, i.e. if veh_type == 'car')
+        :return: gpd.GeoDataFrame or pd.DataFrame for network with traffic loads, taz with subordinate network VKT
         :type target: dict
         :type weights: None or pd.DataFrame
         :type veh_types: list
@@ -646,6 +698,7 @@ class IntraZonal:
         :type distance: float
         :type cell_size: float
         :type fac_cell: float
+        :type occ_rate: float
         :rtype: gpd.GeoDataFrame or pd.DataFrame
         """
 

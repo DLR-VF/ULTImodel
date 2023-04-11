@@ -1,6 +1,6 @@
 # Cost matrix
 
-The cost of travel in the form of travel times and distances is a key element of ULTIMO's 
+The cost of travel in the form of travel times and distances is a key element of ULTImodel's 
 gravity model. The cost matrix is created using `generationData.Matrices`.
 
 Preparation: read connector points `GeoDataFrame`.

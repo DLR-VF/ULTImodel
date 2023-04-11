@@ -18,8 +18,8 @@ with open("requirements.txt") as f:
     INSTALL_REQUIRES = [line.strip() for line in f.readlines()]'''
 
 setuptools.setup(
-    name='ultimo',
-    version='1.0.1',
+    name='ultimodel',
+    version='1.0.0',
     author='German Aerospace Center - DLR (Nina Thomsen)',
     author_email='nina.thomsen@dlr.de',
     description='Universal transport distribution model',
@@ -31,7 +31,7 @@ setuptools.setup(
         "Source": 'github',
         "Bug Tracker": "https://github.com/"
     },
-    license='BSD',
-    packages=['ultimo'],
+    license='MIT',
+    packages=['ultimodel'],
     install_requires=['pandas', 'numpy', 'geopandas', 'shapely', 'osmnx', 'networkx', 'tqdm', 'requests', 'scikit-learn', 'scipy']
 )

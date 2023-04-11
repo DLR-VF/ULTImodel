@@ -1,6 +1,6 @@
 Network
 ===
 
-::: CreateNetwork
+::: ultimodel.CreateNetwork
     filters: [""]
     show_source: False

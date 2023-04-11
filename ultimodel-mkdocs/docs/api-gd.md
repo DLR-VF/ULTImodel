@@ -1,10 +1,10 @@
 Generation and distribution factors
 ===
 
-::: AttractionFactors
+::: ultimodel.AttractionFactors
     filters: [""]
     show_source: False
 
-::: Matrices
+::: ultimodel.Matrices
     filters: [""]
     show_source: False

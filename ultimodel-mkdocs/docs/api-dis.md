@@ -1,6 +1,6 @@
 Distribution
 ===
 
-::: DistributeTraffic
+::: ultimodel.DistributeTraffic
     filters: [""]
     show_source: False

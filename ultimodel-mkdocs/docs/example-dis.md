@@ -205,7 +205,7 @@ all roads within the TAZ with `road_type_weighted_single`
 ```python
 net_r, taz_r = iz.road_type_weighted_single(target=pt, veh_types=['car'])
 
-net_r[['ultimo_id', 'nuts_id', 'car_short']].head()
+net_r[['ulitmo_id', 'nuts_id', 'car_short']].head()
 
 >>> output
 

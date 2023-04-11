@@ -1,6 +1,6 @@
 # Network
 
-A network created in ULTIMO consists of edges and nodes and is extracted from OSM and is
+A network created in ULTImodel consists of edges and nodes and is extracted from OSM and is
 created using `network.CreateNetwork`.
 
 ## Edges

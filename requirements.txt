@@ -1,0 +1,10 @@
+pandas
+numpy
+geopandas
+shapely
+networkx
+osmnx
+tqdm
+requests
+scikit-learn
+scipy'

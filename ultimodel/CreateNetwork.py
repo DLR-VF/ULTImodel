@@ -74,6 +74,7 @@ def graph_from_gdf(nodes, edges, node_id='node_id', node_geo='geometry', edge_id
     :type edge_from: str
     :type edge_to: str
     :return: MultiDiGraph
+    :rtype: MultiDiGraph
     """
     node_graph = nodes.copy()
     node_graph.set_index(node_id, inplace=True)
@@ -90,10 +91,11 @@ def subordinate_road_length(taz_sub, sub_type="secondary"):
     """
     Calculate the subordinate network length per TAZ for a selected category
 
-    @param taz_sub: TAZ GeoDataFrame
-    @param sub_type: highway type for subordinate network
-    @return: GeoDataFrame with aggregated network length per TAZ
-    @type sub_type: str
+    :param taz_sub: TAZ GeoDataFrame
+    :param sub_type: highway type for subordinate network
+    :return: GeoDataFrame with aggregated network length per TAZ
+    :type taz_sub: gpd.GeoDataFrame
+    :type sub_type: str
     :rtype: gpd.GeoDataFrame
     """
     taz_sub['length_sub'] = 0
@@ -461,7 +463,10 @@ class Nodes:
     def remove_duplicates(self):
         """
         Remove duplicate nodes (i.e. at the same coordinates)
-        :return: GeoDataFrame self.nodes.unique without duplicates
+
+        --> result: GeoDataFrame self.nodes.unique without duplicates
+
+        :return: None
         """
         self.nodes['xy'] = [str(list(p.coords)) for p in self.nodes['geometry']]
         # count links per point
@@ -479,9 +484,12 @@ class Nodes:
     def set_node_id(self, id_col="node_id", start=0):
         """
         Set ID per unique node and assign this ID to all nodes
+
+        --> result: GeoDataFrame of self.nodes, self.nodes_unique with ID column
+
         :param id_col: name of ID column for nodes, default "node_id"
         :param start: start of IDs for each node, default 0
-        :return: GeoDataFrame of self.nodes, self.nodes_unique with ID column
+        :return: None
         :type start: int
         :type id_col: str
         """
@@ -508,13 +516,22 @@ class Connectors:
         """
         Identify suitable connector locations per TAZ depending on population density
 
-        :param epsg_pop: int; CRS of population dataframe, default 4326
+        --> result is self.connectors as GeoDataFrame with connector locations; Point layer
+
+        :param epsg_pop: CRS of population dataframe, default 4326
         :param taz: GeoDataFrame with the TAZ
-        :param taz_geom: str; name of geometry column in TAZ GDF
-        :param taz_id: str; name of ID column for TAZ IDs
+        :param taz_geom: name of geometry column in TAZ GDF
+        :param taz_id: name of ID column for TAZ IDs
         :param pop: GeoDataFrame of points with population density
 
-        :return self.connectors as GeoDataFrame with connector locations; Point layer
+        :type epsg_pop: int
+        :type taz: gpd.GeoDataFrame
+        :type taz_geom: str
+        :type taz_id: str
+        :type pop: gpd.GeoDataFrame
+
+        :return: None
+        :rtype:
         """
         cols = ["nuts_id", "c_n", "weight", "geometry"]
         return_con = gpd.GeoDataFrame(columns=cols)
@@ -557,13 +574,19 @@ class Connectors:
         """
         Move connector locations to network nodes
 
-        :return GeoDataFrame with connector nodes
         :param nodes: GeoDataFrame Points; network nodes
-        :param node_no: str; column name with node identifyer
-        :param node_geom: str; name of geometry column in nodes GDF
-        :param zone: str; column name with zone identifyer
-        :param weight: str; column name with weight of connector
+        :param node_no: column name with node identifyer
+        :param node_geom: name of geometry column in nodes GDF
+        :param zone: column name with zone identifyer
+        :param weight: column name with weight of connector
         :return: GeoDataFrame with connector nodes
+
+        :type nodes: gpd.GeoDataFrame
+        :type node_no: str
+        :type node_geom: str
+        :type zone: str
+        :type weight: str
+        :rtype: gpd.GeoDataFrame
         """
         con = self.connectors.copy()
 
@@ -628,9 +651,14 @@ class Ferries:
         """
 
         :param taz: GeoDataFrame with TAZ cells
-        :param scope: str or list; region of taz to be considered; default None includes all taz, str with country code reduces taz to country, list with country codes reduces taz to countries in list
-        :param taz_cn: str; name of column with country code in taz
-        :param taz_geo: str; name of geometry column in taz
+        :param scope: region of taz to be considered; default None includes all taz, str with country code reduces taz to country, list with country codes reduces taz to countries in list
+        :param taz_cn: name of column with country code in taz
+        :param taz_geo: name of geometry column in taz
+
+        :type taz: gpd.GeoDataFrame
+        :type scope: str or list
+        :type taz_cn: str
+        :type taz_geo: str
         """
         self.taz = taz
         self.scope = scope
@@ -649,8 +677,12 @@ class Ferries:
     def find_ferry_routes(self, buffer_water=0.05):
         """
         Extract ferry routes from OSM for water body around region (defined by scope in __init__)
-        :param buffer_water: float; buffer to use around land mass to extract water polygon, in degrees
-        :return: self.ferry and self.nodes include ferry routes and their end nodes
+
+        --> result: self.ferry and self.nodes include ferry routes and their end nodes
+
+        :param buffer_water: buffer to use around land mass to extract water polygon, in degrees
+        :type buffer_water: float
+        :return: None
         """
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
@@ -686,9 +718,12 @@ class Ferries:
         """
         Create GeoDataFrames of ferry routes and nodes with a country; filter other relations out of self.ferry and self.nodes
 
-        :param region_id: str; name of column with identifier
-        :param ferry_buffer: float; buffer to use to look for end nodes in coast region
+        :param region_id: name of column with identifier
+        :param ferry_buffer: buffer to use to look for end nodes in coast region
         :return: GeoDataFrame ferry_routes with national ferry routes and GeoDataFrame ferry_nodes with respective nodes
+        :type region_id: str
+        :type ferry_buffer: float
+        :rtype: gpd.GeoDataFrame
         """
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
@@ -712,8 +747,11 @@ class Ferries:
         """
         Create GeoDataFrame of ferry routes and nodes between different countries, filter national relations out of self.ferry and self.nodes
 
-        :param ferry_buffer: float; buffer to use to look for end nodes in coast region
+        :param ferry_buffer: buffer to use to look for end nodes in coast region
         :return: GeoDataFrame ferry_routes with international ferry routes and GeoDataFrame ferry_nodes with respective nodes
+
+        :type ferry_buffer: float
+        :rtype: gpd.GeoDataFrame
         """
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
@@ -742,13 +780,25 @@ class Ferries:
         :param ferry_nodes: GeoDataFrame with ferry nodes (points)
         :param network_roads: GeoDataFrame with road network (lines)
         :param network_nodes: GeoDataFrame with unique road network nodes (points)
-        :param ferry_buffer_m: float; buffer size around ferry nodes for finding connecting roads in meter
-        :param speed_ferry: float; speed on ferry link in kph
-        :param roads_id: str; name of column with road identifier in network_roads
-        :param roads_fr: str; name of column with from node in network_roads
-        :param roads_to: str; name of column with to node in network_roads
-        :param node_id: str; name of column with node identifier in network_nodes
+        :param ferry_buffer_m: buffer size around ferry nodes for finding connecting roads in meter
+        :param speed_ferry: speed on ferry link in kph
+        :param roads_id: name of column with road identifier in network_roads
+        :param roads_fr: name of column with from node in network_roads
+        :param roads_to: name of column with to node in network_roads
+        :param node_id: name of column with node identifier in network_nodes
         :return: GeoDataFrame of road network, connected along ferry routes
+
+        :type ferry_routes: gpd.GeoDataFrame
+        :type ferry_nodes: gpd.GeoDataFrame
+        :type network_roads: gpd.GeoDataFrame
+        :type network_nodes: gpd.GeoDataFrame
+        :type ferry_buffer_m: float
+        :type speed_ferry: float
+        :type roads_id: str
+        :type roads_fr: str
+        :type roads_to: str
+        :type node_id: str
+        :rtype: gpd.GeoDataFrame
         """
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
@@ -852,9 +902,13 @@ class CombineNetworks:
     def __init__(self, taz, roads, taz_cn='cntr_code'):
         """
 
-        :param taz: GDF; TAZ for regions
-        :param roads: GDF; road network covering all regions
-        :param taz_cn: str; column name for country in taz
+        :param taz: TAZ for regions
+        :param roads: road network covering all regions
+        :param taz_cn: column name for country in taz
+
+        :type taz: gpd.GeoDataFrame
+        :type roads: gpd.GeoDataFrame
+        :type taz_cn: str
         """
         self.taz = taz
         self.taz_cn = taz_cn
@@ -869,9 +923,14 @@ class CombineNetworks:
         """
         Create polygons with a defined buffer around the borders
 
-        :param buffer: int, float; buffer width in m
-        :param taz_geo: str; name of geometry column in TAZ GDF
-        :return: GDF with border polygons
+        --> result: self.border contains border polygons
+
+        :param buffer: buffer width in m
+        :param taz_geo: name of geometry column in TAZ
+        :return: None
+
+        :type buffer: float
+        :type taz_geo: str
         """
         # dissolve zones per country
         taz_dis = self.taz.dissolve(by=self.taz_cn, aggfunc="sum").reset_index()
@@ -920,8 +979,11 @@ class CombineNetworks:
         """
         Find all roads within the border buffer
 
-        :param roads_cn: str; column name with country attribute in roads GDF
-        :return: self.border_roads; GDF with all roads within border buffer
+        --> result: self.border_roads as GDF with all roads within border buffer
+
+        :param roads_cn: column name with country attribute in roads GDF
+        :return: None
+        :type roads_cn: str
         """
         if self.borders.crs == self.network.crs:
             self.border_roads = gpd.overlay(self.network, self.borders, how='union', keep_geom_type=True)
@@ -939,17 +1001,31 @@ class CombineNetworks:
         """
         Create new directed lines between the nearest end nodes of each country at the border
 
-        :param nodes_int: GDF; contains nodes of network
-        :param id_st: int; start ID for new lines
-        :param roads_cn: str; column name for country in self.network
-        :param roads_type: str; column name for road type in self.network
-        :param filter_types: list; types of roads to be included for international connections
-        :param roads_id: str; column name for id in self.network
-        :param roads_fr: str; column name for the start node in self.network
-        :param roads_to: str; column name for the destination node in self.network
-        :param node_id: str; column name for id in nodes
-        :param node_geo: str; column name for geometry in nodes
-        :return: GDF with connected network, dictionary with number of connected roads
+        --> result: self.network_int as GDF with connected network,
+        --> result: self.dict_borders as dictionary with number of connected roads
+
+        :param nodes_int: contains nodes of network
+        :param id_st: start ID for new lines
+        :param roads_cn: column name for country in self.network
+        :param roads_type: column name for road type in self.network
+        :param filter_types: types of roads to be included for international connections
+        :param roads_id: column name for id in self.network
+        :param roads_fr: column name for the start node in self.network
+        :param roads_to: column name for the destination node in self.network
+        :param node_id: column name for id in nodes
+        :param node_geo: column name for geometry in nodes
+        :return: None
+
+        :type nodes_int: gpd.GeoDataFrame
+        :type id_st: int
+        :type roads_cn: str
+        :type roads_type: str
+        :type filter_types: list
+        :type roads_id: str
+        :type roads_fr: str
+        :type roads_to: str
+        :type node_id: str
+        :type node_geo: str
         """
         if filter_types is None:
             filter_types = [1, 2]

@@ -1,7 +1,7 @@
 # Usage
 
-ULTIMO modules can be imported as functions in python scripts. Following the described 
-model steps, ULTIMO produces:
+ULTImodel modules can be imported as functions in python scripts. Following the described 
+model steps, ULTImodel produces:
 
 * an OD-Matrix in the form of an `np.array` for long-distance transport 
 * a `gpd.GeoDataFrame` with network loads for short-distance transport 
@@ -37,7 +37,7 @@ __Distribution Module__
 
 ## Transport types
 
-ULTIMO differentiates between 4 transport types:
+ULTImodel differentiates between 4 transport types:
 
 | National | International |
 |---|---|
@@ -59,7 +59,7 @@ distribution functions is currently not flexible.
 
 __National short-distance travel__
 
-In ULTIMO, short-distance trips are defined as inner cell trips. In order to distribute these,
+In ULTImodel, short-distance trips are defined as inner cell trips. In order to distribute these,
 there are two different options:
 
 * Equal distribution on the road network, weighted by road type
@@ -76,7 +76,7 @@ The result is an OD trip matrix as `np.array`, which can be assigned to the road
 using traffic assignment software.
 
 ## Modes
-Currently, ULTIMO is calibrated to distribute road-based transport. There, both personal and 
+Currently, ULTImodel is calibrated to distribute road-based transport. There, both personal and 
 freight transport are regarded. Freight transport is further split into the three segments,
 leading to a total of four modes:
 
@@ -90,7 +90,7 @@ can be adjusted as part of the `target` method.
 
 ## Target values
 
-ULTIMO uses target values in the form of person kilometers traveled (__PKT__) and tonne kilometers
+ULTImodel uses target values in the form of person kilometers traveled (__PKT__) and tonne kilometers
 (__tkm__) on a national scale. These have to be provided as an external input and are currently
 not calculated as part of the model. They include all travel volumes within a country, i.e
 national travel by national and international vehicles.
@@ -122,7 +122,7 @@ The main structure of the gravity model for long distance and international tran
 | Freight transport |![T_{ij} = \alpha O_{i} D_{j} f(c_{ij})](https://latex.codecogs.com/svg.image?T_{ij}&space;=&space;\alpha&space;O_{i}&space;D_{j}&space;f(c_{ij}))|![f(c_{ij}) = exp(-\beta c_{ij})](https://latex.codecogs.com/svg.image?f(c_{ij})&space;=&space;exp(-\beta&space;c_{ij}))| 
 
 with ![O_{i}](https://latex.codecogs.com/svg.image?O_{i}) and ![D_{j}](https://latex.codecogs.com/svg.image?D_{j}) being 
-attraction factors of the origin and destination cells. With ULTIMO, it is possible to select an individual attribute or 
+attraction factors of the origin and destination cells. With ULTImodel, it is possible to select an individual attribute or 
 create an attraction index consisting of population and industrial areas (from OSM). The balancing factor ![\alpha](https://latex.codecogs.com/svg.image?\alpha&space;) 
 can have different values for each cell or country and can even depend on the cell being an origin or a destination.
 
@@ -134,7 +134,7 @@ parameters can be estimated using trip distance distributions.
 
 ### Attraction index
 
-ULTIMO offers to calculate population per TAZ based on a point layer, which can be used as attraction factors. Furthermore,
+ULTImodel offers to calculate population per TAZ based on a point layer, which can be used as attraction factors. Furthermore,
 there is another function available extracting industrial areas from OSM and combining them with population to form an 
 attraction index. The index is calculated with a Cobb-Douglas function:
 

@@ -1,4 +1,4 @@
-site_name: ULTIMO - Universal Transport Distribution Model
+site_name: ULTImodel - Universal Transport Distribution Model
 site_url: https://example.com/
 site_description: Distribute road-based transport using open data
 site_author: Nina Thomsen
@@ -16,23 +16,20 @@ theme:
 nav:
     - Home: index.md
     - TODO Installation: install.md
-    - Usage: use.md
+    - Model Description: use.md
     - Examples:
         - Network: example-net.md
         - Cost matrix: example-cost.md
         - Trip Distibution: example-dis.md
         - Tutorials: tutorials.md
     - API:
-        - ultimo.network: api-network.md
-        - ultimo.generationData: api-gd.md
-        - ultimo.distribution: api-dis.md
+        - Network: api-network.md
+        - Generation and distribution factors: api-gd.md
+        - Distribution: api-dis.md
     - Distribution:
         - ChangeLog: changes.md
-        - TODO License (BSD): license.md
+        - License (MIT): license.md
         - TODO Legal: legal.md
-    - Developer Docs:
-        - TODO Notes: notes.md
-        - TODO How To Release: release.md
 
 markdown_extensions:
     - admonition
