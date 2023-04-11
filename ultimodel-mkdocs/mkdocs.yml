@@ -2,6 +2,7 @@ site_name: ULTImodel - Universal Transport Distribution Model
 site_url: https://github.com/DLR-VF/ULTImodel 
 site_description: Distribute road-based transport using open data
 site_author: Nina Thomsen
+site_dir: ./html
 docs_dir: ./docs
 repo_url: https://github.com/DLR-VF/ULTImodel 
 
