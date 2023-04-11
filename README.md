@@ -40,7 +40,10 @@ Besides, you may __download the current release__ here:
 
 
 ## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+Examples of using **ULTImodel** can be found in the [tutorials folder](https://github.com/DLR-VF/ULTImodel/blob/master/tutorial/).
+
+Additional documentation can be found at <https://ultimodel.readthedocs.io/>.
+
 
 ## Authors and acknowledgment
 **ULTImodel** was developed by Nina Thomsen.
