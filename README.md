@@ -1,6 +1,6 @@
 # ULTImodel
 
-[![License: BSD](https://img.shields.io/badge/License-BSD-green.svg)](link-to-license-github)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/DLR-VF/ULTImodel/blob/master/LICENSE)
 [![Documentation Status](link-to-readthedocs)](link-to.readthedocs)
 
 A universal transport distribution model based on OSM
@@ -33,7 +33,7 @@ You can also document commands to lint the code or run tests. These steps help t
 Show your appreciation to those who have contributed to the project.
 
 ## License
-ULTImodel is licensed under the [MIT license](https://gitlab.dlr.de/ultimo/ultimo-release/-/blob/main/LICENSE).
+ULTImodel is licensed under the [MIT license](https://github.com/DLR-VF/ULTImodel/blob/master/LICENSE).
 
 ## Project status
 If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
