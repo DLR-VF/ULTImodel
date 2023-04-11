@@ -15,8 +15,6 @@ The software includes modules for network generation, trip generation and trip d
 * Georeferenced traffic analysis zones (TAZ) for the respective region
 * Target value for national transport volume (i.e. person-kilometres or tonne-kilometres)
 
-*insert schema*
-
 ## Background
 
 ULTImodel was initially developed in order to spatially distribute road transport emissions. The goal was to introduce a 
