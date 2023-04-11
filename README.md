@@ -50,5 +50,16 @@ We want to thank the following persons for the help during **ULTImodel's** devel
 ## License
 **ULTImodel** is licensed under the [MIT license](https://github.com/DLR-VF/ULTImodel/blob/master/LICENSE).
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+## Links
+Please find further information on the web:
+
+* The complete documentation is located at <https://ultimodel.readthedocs.io/>
+* The github repository is located at <https://github.com/DLR-VF/ULTImodel>
+* The issue tracker is located at <https://github.com/DLR-VF/ULTImodel/issues>
+
+## Legal
+
+Please find the legal information here: <https://github.com/DLR-VF/ULTImodel/blob/master/ultimodel-mkdocs/docs/legal.md>
+
+
+
