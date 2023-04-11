@@ -25,11 +25,11 @@ setuptools.setup(
     description='Universal transport distribution model',
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url='https://gitlab.dlr.de/ultimo/ultimo-release',
+    url='https://github.com/DLR-VF/ULTImodel',
     project_urls = {
-        "Documentation": 'readthedocs',
-        "Source": 'github',
-        "Bug Tracker": "https://github.com/"
+        "Documentation": 'https://ultimodel.readthedocs.io/',
+        "Source": 'https://github.com/DLR-VF/ULTImodel',
+        "Bug Tracker": "https://github.com/DLR-VF/ULTImodel/issues "
     },
     license='MIT',
     packages=['ultimodel'],
