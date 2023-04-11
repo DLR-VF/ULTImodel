@@ -15,7 +15,7 @@ theme:
 
 nav:
     - Home: index.md
-    - TODO Installation: install.md
+    - Installation: install.md
     - Model Description: use.md
     - Examples:
         - Network: example-net.md
@@ -29,7 +29,7 @@ nav:
     - Distribution:
         - ChangeLog: changes.md
         - License (MIT): license.md
-        - TODO Legal: legal.md
+        - Legal: legal.md
 
 markdown_extensions:
     - admonition
