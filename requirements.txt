@@ -7,4 +7,4 @@ osmnx
 tqdm
 requests
 scikit-learn
-scipy'
+scipy
