@@ -40,7 +40,7 @@ class Matrix:
         :type y_: str
         :type conn_geo: str
         """
-        self.conn = conn
+        self.conn = conn.copy()
         if type(self.conn) == gpd.GeoDataFrame:
             self.conn.to_crs(epsg=4326, inplace=True)
             # transform to data frame with x and y coordinates
@@ -135,7 +135,7 @@ class Matrix:
         for a in tqdm(range(len(self.conn))):
             for b in range(len(self.conn)):
                 # calc od weight
-                w[a, b] = float(self.conn.loc[self.conn[self.id_col] == a, self.weight_col]) * float(self.conn.loc[self.conn[self.id_col] == b, self.weight_col])
+                w[a, b] = float(self.conn.loc[self.conn[self.id_col] == a, self.weight_col].iloc[0]) * float(self.conn.loc[self.conn[self.id_col] == b, self.weight_col].iloc[0])
 
         # container for final values
         mx_z = np.zeros((len(zones), len(zones), 2))
@@ -144,12 +144,12 @@ class Matrix:
         time1 = time.time()
         print('start aggregating zone matrix:', datetime.now())
         for o in tqdm(zones):
-            id_o = int(zones_df.loc[zones_df['zone'] == o, 'id'])
+            id_o = int(zones_df.loc[zones_df['zone'] == o, 'id'].iloc[0])
             id_conn_o = list(self.conn.loc[self.conn[self.zone_col] == o, self.id_col])
             mtx_o = self.all_mtx[id_conn_o, :]
             w_o = w[id_conn_o, :]
             for d in zones:
-                id_d = int(zones_df.loc[zones_df['zone'] == d, 'id'])
+                id_d = int(zones_df.loc[zones_df['zone'] == d, 'id'].iloc[0])
                 id_conn_d = list(self.conn.loc[self.conn[self.zone_col] == d, self.id_col])
                 mtx_od = mtx_o[:, id_conn_d]
                 w_od = w_o[:, id_conn_d]

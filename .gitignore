@@ -11,3 +11,7 @@
 
 *cache*
 */cache/*
+
+venv
+dist
+ultimodel.egg-info

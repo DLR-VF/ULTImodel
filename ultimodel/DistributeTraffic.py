@@ -53,7 +53,7 @@ def get_trip_matrix(mx_grav, taz, goal_col, taz_id='id'):
     # choice probabilities and trips
     mx_trips = np.zeros(mx_grav.shape)
     for t in taz[taz_id]:
-        goal = float(taz.loc[taz[taz_id] == t, goal_col])
+        goal = float(taz.loc[taz[taz_id] == t, goal_col].iloc[0])
         # get probabilities for trips starting at t
         prob_a = mx_grav[t, :] / mx_grav[t, :].sum()
         prob_b = mx_grav[:, t] / mx_grav[:, t].sum()
@@ -213,9 +213,9 @@ class TargetValues:
         :type unit: float
         :rtype: dict
         """
-        target = float(self.country_layer.loc[self.country_layer[self.cn_col]==cn, target_col])
-        shares_int = pt_shares_int(a=float(self.country_layer.loc[self.country_layer[self.cn_col]==cn, 'area']),
-                                   b=float(self.country_layer.loc[self.country_layer[self.cn_col]==cn, 'border_share']))
+        target = float(self.country_layer.loc[self.country_layer[self.cn_col]==cn, target_col].iloc[0])
+        shares_int = pt_shares_int(a=float(self.country_layer.loc[self.country_layer[self.cn_col]==cn, 'area'].iloc[0]),
+                                   b=float(self.country_layer.loc[self.country_layer[self.cn_col]==cn, 'border_share'].iloc[0]))
 
         f_in_c = target * shares_int['pt_share_foreign']
         int1 = target * shares_int['pt_share_foreign'] * shares_int['pt_ratio_int']
@@ -268,7 +268,7 @@ class TargetValues:
         # check if segments, loads and shares match
         if (sorted(segments) == sorted(shares_tkm.keys())) & (sorted(segments) == sorted(loads_t.keys())) & (seg_split in segments):
 
-            target = float(self.country_layer.loc[self.country_layer[self.cn_col] == cn, target_col])
+            target = float(self.country_layer.loc[self.country_layer[self.cn_col] == cn, target_col].iloc[0])
 
             cat_dict = {0: {'int_imex': 0.03, 'int_transit': 0.00, 'nat': 0.97},
                         1: {'int_imex': 0.15, 'int_transit': 0.02, 'nat': 0.83},
@@ -276,9 +276,9 @@ class TargetValues:
                         3: {'int_imex': 0.20, 'int_transit': 0.10, 'nat': 0.70},
                         4: {'int_imex': 0.00, 'int_transit': 0.00, 'nat': 1.00}}
 
-            border_share = float(self.country_layer.loc[self.country_layer[self.cn_col] == cn, 'border_share'])
-            neighbors = float(self.country_layer.loc[self.country_layer[self.cn_col] == cn, 'neighbors'])
-            border_crossings = float(self.country_layer.loc[self.country_layer[self.cn_col] == cn, 'border_crossings_count'])
+            border_share = float(self.country_layer.loc[self.country_layer[self.cn_col] == cn, 'border_share'].iloc[0])
+            neighbors = float(self.country_layer.loc[self.country_layer[self.cn_col] == cn, 'neighbors'].iloc[0])
+            border_crossings = float(self.country_layer.loc[self.country_layer[self.cn_col] == cn, 'border_crossings_count'].iloc[0])
 
             # find category for country
             cat_country = 2
@@ -298,7 +298,7 @@ class TargetValues:
                 cat_country = 4
 
             # distances
-            area = float(self.country_layer.loc[self.country_layer[self.cn_col] == cn, 'area'])
+            area = float(self.country_layer.loc[self.country_layer[self.cn_col] == cn, 'area'].iloc[0])
             dis_long = 0.365 * area**(1/2) + 61.488
             dis_short = 1.183 * area**(1/4) + 22.361
             dis_transit = 0.928 * area**(1/2) + 38.998
@@ -459,9 +459,9 @@ class GravityModel:
         # gravity model: gravity values
         mx_grav = np.zeros((len(taz), len(taz)))
         for o in taz['id']:
-            pop_o = float(taz.loc[taz['id'] == o, taz_pop])
+            pop_o = float(taz.loc[taz['id'] == o, taz_pop].iloc[0])
             for d in taz['id']:
-                pop_d = float(taz.loc[taz['id'] == d, taz_pop])
+                pop_d = float(taz.loc[taz['id'] == d, taz_pop].iloc[0])
                 mx_grav[o, d] = (pop_o*pop_d)**alpha * mtx[o, d, 0]**gamma
         # fill diagonal (no trips) and NaN
         np.fill_diagonal(mx_grav, 0)
@@ -532,9 +532,9 @@ class GravityModel:
         # gravity model: gravity values
         mx_grav = np.zeros((len(taz), len(taz)))
         for o in taz['id']:
-            ind_o = float(taz.loc[taz['id'] == o, index_col])
+            ind_o = float(taz.loc[taz['id'] == o, index_col].iloc[0])
             for d in taz['id']:
-                ind_d = float(taz.loc[taz['id'] == d, index_col])
+                ind_d = float(taz.loc[taz['id'] == d, index_col].iloc[0])
                 mx_grav[o, d] = ind_o * ind_d * np.exp(-beta*mtx[o, d, 1])
         # fill diagonal (no trips) and NaN
         np.fill_diagonal(mx_grav, 0)
@@ -610,7 +610,7 @@ class IntraZonal:
         sub = self.taz[[taz_id, sub_len]].copy()
         sub.rename(columns={sub_len: 'length'}, inplace=True)
         sub[net_type] = 0
-        sub['weighted_length'] = sub['length']*float(weights.loc[weights[net_type]==0, 'weight'])
+        sub['weighted_length'] = sub['length']*float(weights.loc[weights[net_type]==0, 'weight'].iloc[0])
         # concat with network length per taz from net
         len_per_type = self.net.groupby([taz_id, net_type])['length'].sum().reset_index()
         len_per_type = pd.concat([len_per_type, sub[[taz_id, net_type, 'length']]])
@@ -722,7 +722,7 @@ class IntraZonal:
         net = net.merge(weights, on=net_type, how='left')
         net.loc[net['weight'].isna(), 'weight'] = 0
         net['weighted_length'] = net['length'] * net['weight']
-        taz_2['weighted_sub'] = taz_2[sub_len]*float(weights.loc[weights[net_type]==0, 'weight'])
+        taz_2['weighted_sub'] = taz_2[sub_len]*float(weights.loc[weights[net_type]==0, 'weight'].iloc[0])
 
         # iterate over taz
         for t in taz_2[taz_id]:
@@ -730,19 +730,19 @@ class IntraZonal:
             net['weighted_length2'] = net['weighted_length']
             net['weight2'] = net['weight']
             taz_2['weighted_sub2'] = taz_2['weighted_sub']
-            taz_2['weight2'] = float(weights.loc[weights[net_type]==0, 'weight'])
+            taz_2['weight2'] = float(weights.loc[weights[net_type]==0, 'weight'].iloc[0])
             net.loc[net[taz_id] == t, 'weighted_length2'] = net.loc[net[taz_id] == t, 'weighted_length2'] * fac_cell
             net.loc[net[taz_id] == t, 'weight2'] = net.loc[net[taz_id] == t, 'weight2'] *fac_cell
             taz_2.loc[taz_2[taz_id] == t, 'weighted_sub2'] = taz_2.loc[taz_2[taz_id] == t, 'weighted_sub2'] * fac_cell
             taz_2.loc[taz_2[taz_id] == t, 'weight2'] = taz_2.loc[taz_2[taz_id] == t, 'weight2'] * fac_cell
 
             # list of taz within distance
-            t_id = int(taz_2.loc[taz_2[taz_id] == t, taz_mx_id])
+            t_id = int(taz_2.loc[taz_2[taz_id] == t, taz_mx_id].iloc[0])
             matrix_t = matrix_dis[t_id, :]
             sur_ids = np.where(matrix_t <= distance)[0].tolist()
 
             # for small taz: add surrounding TAZ within higher distances if no sur found for distance
-            if (len(sur_ids)==0) & (float(taz_2.loc[taz_2[taz_id]==t, 'area'])<cell_size):
+            if (len(sur_ids) == 0) & (float(taz_2.loc[taz_2[taz_id] == t, 'area'].iloc[0]) < cell_size):
                 sur_ids = np.where(matrix_t == matrix_t.min())[0].tolist()
 
             # add id of t to sur ids (all relevant cells) and get taz_ids
@@ -755,7 +755,7 @@ class IntraZonal:
 
             # calculate trips per km for veh_types
             for veh_type in veh_types:
-                taz_vkt = float(taz_2.loc[taz_2[taz_id] == t, veh_type])
+                taz_vkt = float(taz_2.loc[taz_2[taz_id] == t, veh_type].iloc[0])
                 taz_veh = taz_vkt / agg_w_len
                 net.loc[net[taz_id].isin(sur_ids_taz), '{}_short'.format(veh_type)] = net.loc[net[taz_id].isin(sur_ids_taz), '{}_short'.format(veh_type)] + net.loc[net[taz_id].isin(sur_ids_taz), 'weight2'] * taz_veh
                 taz_2.loc[taz_2[taz_id].isin(sur_ids_taz), '{}_sub'.format(veh_type)] += taz_2.loc[taz_2[taz_id].isin(sur_ids_taz), 'weight2'] * taz_veh * taz_2.loc[taz_2[taz_id].isin(sur_ids_taz), sub_len]

@@ -218,6 +218,7 @@ class BorderCrossingAtts:
             warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
             warnings.filterwarnings("ignore", category=FutureWarning, append=True)
             warnings.filterwarnings("ignore", category=UserWarning, append=True)
+            warnings.filterwarnings("ignore", category=RuntimeWarning, append=True)
 
             for country in self.countries:
 

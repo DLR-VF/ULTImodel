@@ -123,7 +123,7 @@ class Edges:
 
         :param country: code or name of country
         :param taz: GeoDataFrame including the TAZ
-        :param taz_geo: Name of geometry column in TAZ layer, default "geometry
+        :param taz_geo: Name of geometry column in TAZ layer
         :param taz_cn: Name of column in TAZ layer that defines the country of the TAZ
         :type taz_geo: str
         :type taz_cn: str
@@ -317,7 +317,7 @@ class Edges:
                 sg_g = sg[1]
                 # get all nodes in sg
                 n_sg = [e[:-1] for e in sg_g.edges]
-                # get end nodes: all nodes with two or less edges (or minimum number of edges if min>2)
+                # get end nodes: all nodes with two or fewer edges (or minimum number of edges if min>2)
                 n_sg = np.unique(n_sg, return_counts=True)
                 end_sg = n_sg[0][n_sg[1] <= max(2, min(n_sg[1]))]
                 end_nodes.update({sg_id: end_sg})
@@ -380,6 +380,7 @@ class Edges:
                     container.extend([s1, s2])
                     with warnings.catch_warnings():
                         warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
+                        warnings.filterwarnings("ignore", category=FutureWarning, append=True)
                         # create lines in both directions
                         node_from = nodes.loc[nodes[node_id] == row[node_id], node_geo]
                         node_to = nodes.loc[nodes[node_id] == row['{}_near'.format(node_id)], node_geo]
@@ -398,8 +399,8 @@ class Edges:
             edges_del = []
             for sg in S_del:
                 # get all nodes and edges in sg
-                n_sg = np.unique([e[:-1] for e in (sg.edges)])
-                e_sg = np.unique([e[2] for e in (sg.edges)])
+                n_sg = np.unique([e[:-1] for e in sg.edges])
+                e_sg = np.unique([e[2] for e in sg.edges])
                 nodes_del.extend(n_sg)
                 edges_del.extend(e_sg)
             roads_final = roads_final.loc[~roads_final[edge_id].isin(edges_del)]
@@ -550,7 +551,7 @@ class Connectors:
         for t in taz[taz_id].unique():
             pop_t = pop_taz[pop_taz[taz_id] == t]
             if len(pop_t) > 0:
-                n_c = int(taz.loc[taz[taz_id] == t, "numcon"])
+                n_c = int(taz.loc[taz[taz_id] == t, "numcon"].iloc[0])
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=UserWarning)
                     kmeans = KMeans(init="random", n_clusters=n_c, n_init=10, max_iter=300, random_state=42)
@@ -575,10 +576,11 @@ class Connectors:
         Move connector locations to network nodes
 
         :param nodes: GeoDataFrame Points; network nodes
-        :param node_no: column name with node identifyer
+        :param node_no: column name with node identifier
         :param node_geom: name of geometry column in nodes GDF
-        :param zone: column name with zone identifyer
+        :param zone: column name with zone identifier
         :param weight: column name with weight of connector
+        :param country_check: ensure that connectors are moved to nodes within the same country
         :return: GeoDataFrame with connector nodes
 
         :type nodes: gpd.GeoDataFrame
@@ -586,6 +588,7 @@ class Connectors:
         :type node_geom: str
         :type zone: str
         :type weight: str
+        :type country_check: bool
         :rtype: gpd.GeoDataFrame
         """
         con = self.connectors.copy()
@@ -735,7 +738,7 @@ class Ferries:
             reg_buf[self.taz_geo] = reg_buf[self.taz_geo].buffer(ferry_buffer)
             border_ferry = gpd.overlay(self.nodes, reg_buf[[region_id, self.taz_geo]])
             # find end nodes within two different cells
-            n_g = border_ferry.groupby('LinkID')['order', region_id].nunique().reset_index()
+            n_g = border_ferry.groupby('LinkID')[['order', region_id]].nunique().reset_index()
             filter_ferry = list(n_g.loc[(n_g['order'] > 1) & (n_g[region_id] > 1), 'LinkID'])
             # final result
             ferry_routes = self.ferry[self.ferry['id'].isin(filter_ferry)].copy()
@@ -888,7 +891,7 @@ class Ferries:
                             id_st += 1
                     else:
                         print('no start / end connection for ferry route {}'.format(ferry))
-
+        lines.crs = network_roads.crs
         network_roads = pd.concat([network_roads, lines])
 
         return network_roads
@@ -944,6 +947,7 @@ class CombineNetworks:
             warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
             warnings.filterwarnings("ignore", category=FutureWarning, append=True)
             warnings.filterwarnings("ignore", category=UserWarning, append=True)
+            warnings.filterwarnings("ignore", category=RuntimeWarning, append=True)
 
             for country in self.countries:
 
@@ -1097,6 +1101,7 @@ class CombineNetworks:
 
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
+                    warnings.filterwarnings("ignore", category=FutureWarning, append=True)
                     # create lines between node pairs
                     for l in pairs_b:
                         # get coordinates and create LineString
@@ -1112,6 +1117,7 @@ class CombineNetworks:
                 self.dict_borders.update({b: 0})
 
         # concat border crossings and rest of the network
+        lines.crs = self.network_int.crs
         self.network_int = pd.concat([self.network, lines])
         # ensure that IDs are integer
         self.network_int[roads_id] = self.network_int[roads_id].astype(int)
