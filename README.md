@@ -26,10 +26,6 @@ __pip__
 ```console
 python -m pip install ultimodel
 ```
-__conda__
-```console
-conda install -c conda-forge ultimodel
-```
 
 You may __download a copy or fork the code__ at [ULTImodel&apos;s github page](link-to-github).
 
