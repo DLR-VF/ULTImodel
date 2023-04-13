@@ -31,8 +31,8 @@ You may __download a copy or fork the code__ at [ULTImodel&apos;s github page](l
 
 Besides, you may __download the current release__ here:
 
-* [ultimodel-1.0.0.zip](https://github.com/DLR-VF/ULTImodel/archive/refs/tags/1.0.0.zip)
-* [ultimodel-1.0.0.tar.gz](https://github.com/DLR-VF/ULTImodel/archive/refs/tags/1.0.0.tar.gz)
+* [ultimodel-1.0.1.zip](https://github.com/DLR-VF/ULTImodel/archive/refs/tags/1.0.1.zip)
+* [ultimodel-1.0.1.tar.gz](https://github.com/DLR-VF/ULTImodel/archive/refs/tags/1.0.1.tar.gz)
 
 
 ## Usage
