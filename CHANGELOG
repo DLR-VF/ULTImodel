@@ -1,6 +1,10 @@
 ChangeLog for ULTIMO
 =========================
 
-ULTIMO-1.0.1 (03.2023)
+ULTIMO-1.0.1 (13.04.2023)
+----------------------------
+Bug fix for network creation (groupby statement) and removing causes for warnings with py3.11
+
+ULTIMO-1.0.0 (11.04.2023)
 ----------------------------
 First complete release
