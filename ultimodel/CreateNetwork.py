@@ -766,7 +766,7 @@ class Ferries:
             reg_buf[self.taz_geo] = reg_buf[self.taz_geo].buffer(ferry_buffer)
             border_ferry = gpd.overlay(self.nodes, reg_buf[[self.taz_cn, self.taz_geo]])
             # find end nodes within two different countries
-            n_g = border_ferry.groupby('LinkID')['order', self.taz_cn].nunique().reset_index()
+            n_g = border_ferry.groupby('LinkID')[['order', self.taz_cn]].nunique().reset_index()
             filter_ferry = list(n_g.loc[(n_g['order'] > 1) & (n_g[self.taz_cn] > 1), 'LinkID'])
             # final result
             ferry_routes = self.ferry[self.ferry['id'].isin(filter_ferry)].copy()
