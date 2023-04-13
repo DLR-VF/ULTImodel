@@ -1117,7 +1117,7 @@ class CombineNetworks:
                 self.dict_borders.update({b: 0})
 
         # concat border crossings and rest of the network
-        lines.crs = self.network_int.crs
+        lines.crs = self.network.crs
         self.network_int = pd.concat([self.network, lines])
         # ensure that IDs are integer
         self.network_int[roads_id] = self.network_int[roads_id].astype(int)
