@@ -50,4 +50,7 @@ plugins:
                     filters: [""]
                     show_source: False
                     docstring_style: "sphinx"
+                    members_order: "source"
+                    merge_init_into_class: True
+                    show_root_members_full_path: True
 
