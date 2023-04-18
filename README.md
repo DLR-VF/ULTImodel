@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/DLR-VF/ULTImodel/blob/master/LICENSE)
 [![PyPI version](https://badge.fury.io/py/ultimodel.svg)](https://pypi.python.org/pypi/ultimodel)
 [![Documentation Status](https://readthedocs.org/projects/ultimodel/badge/?version=latest)](https://ultimodel.readthedocs.io/en/latest/?badge=latest)
-[![Cite-us](https://img.shields.io/badge/doi-10.5281%2Fzenodo.7817425-blue)](https://doi.org/10.5281/zenodo.7817425)
+[![Cite-us](https://img.shields.io/badge/doi-10.5281%2Fzenodo.7826486-blue)](https://doi.org/10.5281/zenodo.7826486)
  
 **ULTImodel** &mdash; A universal transport distribution model written in Python.
 
@@ -26,17 +26,13 @@ __pip__
 ```console
 python -m pip install ultimodel
 ```
-__conda__
-```console
-conda install -c conda-forge ultimodel
-```
 
 You may __download a copy or fork the code__ at [ULTImodel&apos;s github page](link-to-github).
 
 Besides, you may __download the current release__ here:
 
-* [ultimodel-1.0.0.zip](https://github.com/DLR-VF/ULTImodel/archive/refs/tags/1.0.0.zip)
-* [ultimodel-1.0.0.tar.gz](https://github.com/DLR-VF/ULTImodel/archive/refs/tags/1.0.0.tar.gz)
+* [ultimodel-1.0.1.zip](https://github.com/DLR-VF/ULTImodel/archive/refs/tags/1.0.1.zip)
+* [ultimodel-1.0.1.tar.gz](https://github.com/DLR-VF/ULTImodel/archive/refs/tags/1.0.1.tar.gz)
 
 
 ## Usage

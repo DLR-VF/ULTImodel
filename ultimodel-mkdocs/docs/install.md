@@ -9,14 +9,10 @@ __pip__
 ```console
 python -m pip install ultimodel
 ```
-__conda__
-```console
-conda install -c conda-forge ultimodel
-```
 
 You may __download a copy or fork the code__ at [ULTImodel&apos;s github page](https://github.com/DLR-VF/ULTImodel).
 
 Besides, you may __download the current release__ here:
 
-* [ultimodel-1.0.0.zip](https://github.com/DLR-VF/ULTImodel/archive/refs/tags/1.0.0.zip)
-* [ultimodel-1.0.0.tar.gz](https://github.com/DLR-VF/ULTImodel/archive/refs/tags/1.0.0.tar.gz)
+* [ultimodel-1.0.1.zip](https://github.com/DLR-VF/ULTImodel/archive/refs/tags/1.0.1.zip)
+* [ultimodel-1.0.1.tar.gz](https://github.com/DLR-VF/ULTImodel/archive/refs/tags/1.0.1.tar.gz)

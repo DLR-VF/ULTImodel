@@ -1,9 +1,9 @@
 # ULTImodel
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/DLR-VF/ULTImodel/blob/master/LICENSE)
-[![PyPI version](https://badge.fury.io/py/ultimodel.svg)](https://pypi.python.org/pypi/ultimodel)
+[![PyPI version](https://badge.fury.io/py/ultimodel.svg)](https://badge.fury.io/py/ultimodel)
 [![Documentation Status](https://readthedocs.org/projects/ultimodel/badge/?version=latest)](https://ultimodel.readthedocs.io/en/latest/?badge=latest)
-[![Cite-us](https://img.shields.io/badge/doi-10.5281%2Fzenodo.7817425-blue)](https://doi.org/10.5281/zenodo.7817425)
+[![Cite-us](https://img.shields.io/badge/doi-10.5281%2Fzenodo.7826486-blue)](https://doi.org/10.5281/zenodo.7826486)
 
 ULTImodel &mdash; A universal transport distribution model written in Python.
 
@@ -34,3 +34,7 @@ For more information, see:
  
 Thomsen, Nina und Seum, Stefan (2021) [Using Open Data for Spatial Transport Emission Modelling](https://aetransport.org/past-etc-papers/conference-papers-2021?abstractId=7202&state=b). 
 European Transport Conference ETC 2021, 13.-15. Sep. 2021, online.
+
+## Citation
+
+Please cite as *German Aerospace Center (DLR): ULTImodel. https://doi.org/10.5281/zenodo.7826486*
