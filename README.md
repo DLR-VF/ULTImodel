@@ -27,7 +27,7 @@ __pip__
 python -m pip install ultimodel
 ```
 
-You may __download a copy or fork the code__ at [ULTImodel&apos;s github page](link-to-github).
+You may __download a copy or fork the code__ at [ULTImodel&apos;s github page]([link-to-github](https://github.com/DLR-VF/ULTImodel)).
 
 Besides, you may __download the current release__ here:
 
