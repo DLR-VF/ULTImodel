@@ -20,6 +20,8 @@ from shapely.errors import ShapelyDeprecationWarning
 from shapely.geometry import Point, LineString
 from sklearn.cluster import KMeans
 from tqdm import tqdm
+import requests
+import json
 
 
 def ckdnearest(gdA, gdB, bcolA, bcolB, n):
@@ -118,23 +120,26 @@ def subordinate_road_length(taz_sub, sub_type="secondary"):
 class Edges:
     """Create network edges from OSM"""
 
-    def __init__(self, country, taz, taz_cn="country", taz_geo="geometry"):
+    def __init__(self, country, taz, taz_cn="country", taz_geo="geometry", surface=False):
         """
 
         :param country: code or name of country
         :param taz: GeoDataFrame including the TAZ
         :param taz_geo: Name of geometry column in TAZ layer
         :param taz_cn: Name of column in TAZ layer that defines the country of the TAZ
+        :param surface: If True, add attribute with road surface to network
         :type taz_geo: str
         :type taz_cn: str
         :type taz: gpd.GeoDataFrame
         :type country: str
+        :type surface: bool
         """
         self.country = country
         self.edges = gpd.GeoDataFrame()
         self.taz = taz
         self.taz_cn = taz_cn
         self.taz_geo = taz_geo
+        self.surface = surface
 
     def get_polygon(self, taz_id, proj_crs=3035, buffer=2500):
         """
@@ -189,8 +194,18 @@ class Edges:
         filter_nw = '["area"!~"yes"]["highway"~"{}"]["motor_vehicle"!~"no"]["motorcar"!~"no"]["access"!~"private"]["service"!~"parking|parking_aisle|driveway|private|emergency_access"]'.format(
             fil_str)
 
+        # get road surface for roads in all polygons
+        if self.surface:
+            # set url and query
+            overpass_url = "http://overpass-api.de/api/interpreter"
+            overpass_query_str = """
+                            [out:json];
+                            (way["highway"="{}"](poly:"{}");
+                            );
+                            out center;
+                            """
+
         # get polygon for country
-        polygons = polygons
         n_poly = 0  # number of polygons with road network
         for i, poly in enumerate(polygons[self.taz_geo][:]):
             try:
@@ -199,10 +214,38 @@ class Edges:
                     warnings.filterwarnings("ignore", category=FutureWarning, append=True)
                     warnings.filterwarnings("ignore", category=UserWarning, append=True)
                     G = ox.graph_from_polygon(poly, simplify=False, custom_filter=filter_nw, retain_all=True)
+                    if self.surface:
+                        # get polygon coordinates
+                        coords = list(poly.exterior.coords)
+                        coords = [(x[1], x[0]) for x in coords]  # reverse lon and lat for overpass query
+                        coords = coords[::10]  # reduce to feasible number for length of query string
+                        coords = [str(np.round(item, 3)) for sublist in coords for item in sublist]
+                        coord_str = ' '.join(coords)
+                        sur_df = pd.DataFrame(columns=['osmid', 'surface'])
+                        # overpass query
+                        for r in filter_highway:
+                            overpass_query = overpass_query_str.format(r, coord_str)
+                            response = requests.get(overpass_url, params={'data': overpass_query})
+                            data = response.json()
+                            _surface = {x['id']: x['tags']['surface'] for x in data['elements'] if
+                                        'surface' in x['tags'].keys()}
+                            _surface = pd.DataFrame.from_dict(_surface, orient='index', columns=['surface']).reset_index().rename(columns={'index': 'osmid'})
+                            del data, response
+                            sur_df = pd.concat([sur_df, _surface])
+                            del _surface
+                        # merge surface to edges in G on osmid
+                        n, e = ox.utils_graph.graph_to_gdfs(G)
+                        e = e.reset_index().merge(sur_df, on='osmid', how='left').set_index(['u', 'v', 'key'])
+                        # transform back to Graph
+                        G = ox.utils_graph.graph_from_gdfs(n, e)
+                        del n, e
                     G = ox.simplify_graph(G)
                     G = ox.simplification.consolidate_intersections(G, tolerance=0.002)
                 G = ox.speed.add_edge_speeds(G, fallback=50, precision=0)
-                edges = gpd.GeoDataFrame([x[2] for x in G.edges.data()])[["highway", "speed_kph", "geometry"]]
+                if self.surface:
+                    edges = gpd.GeoDataFrame([x[2] for x in G.edges.data()])[["highway", "speed_kph", "surface", "geometry"]]
+                else:
+                    edges = gpd.GeoDataFrame([x[2] for x in G.edges.data()])[["highway", "speed_kph", "geometry"]]
                 if i == 0:
                     self.edges = edges.copy()
                 else:
@@ -269,8 +312,10 @@ class Edges:
         self.edges = pd.merge(self.edges, en_nodes[[linkid_col, nodeid_col]], left_on="ultimo_id", right_on=linkid_col,
                               how="left")
         self.edges.rename(columns={nodeid_col: "to_node"}, inplace=True)
-        self.edges = self.edges[
-            ["ultimo_id", "from_node", "to_node", "type", "nuts_id", "length", "speed_kph", "tt", "geometry"]]
+        if self.surface:
+            self.edges = self.edges[["ultimo_id", "from_node", "to_node", "type", "nuts_id", "length", "speed_kph", "tt", "surface", "geometry"]]
+        else:
+            self.edges = self.edges[["ultimo_id", "from_node", "to_node", "type", "nuts_id", "length", "speed_kph", "tt", "geometry"]]
 
     def connect_subgraphs(self, nodes, edges=None, node_id='node_id', node_geo='geometry', edge_id='ultimo_id', edge_from='from_node', edge_to='to_node'):
         """
@@ -387,9 +432,18 @@ class Edges:
                         line = LineString([[node_from.x, node_from.y], [node_to.x, node_to.y]])
                         # add to road network
                         id_ = roads_final[edge_id].max()
-                        roads_final.loc[len(roads_final) + 1] = [id_ + 1, row[node_id], row['{}_near'.format(node_id)], 9, '{}000'.format(self.country), 0,
-                                                                 50, 0, line]
-                        roads_final.loc[len(roads_final) + 1] = [id_ + 2, row['{}_near'.format(node_id)], row[node_id], 11, '{}000'.format(self.country), 0,
+                        if self.surface:
+                            roads_final.loc[len(roads_final) + 1] = [id_ + 1, row[node_id],
+                                                                     row['{}_near'.format(node_id)], 9,
+                                                                     '{}000'.format(self.country), 0,
+                                                                     50, 0, '', line]
+                            roads_final.loc[len(roads_final) + 1] = [id_ + 2, row['{}_near'.format(node_id)],
+                                                                     row[node_id], 11, '{}000'.format(self.country), 0,
+                                                                     50, 0, '', line]
+                        else:
+                            roads_final.loc[len(roads_final) + 1] = [id_ + 1, row[node_id], row['{}_near'.format(node_id)], 9, '{}000'.format(self.country), 0,
+                                                                     50, 0, line]
+                            roads_final.loc[len(roads_final) + 1] = [id_ + 2, row['{}_near'.format(node_id)], row[node_id], 11, '{}000'.format(self.country), 0,
                                                                  50, 0, line]
 
             # 5 remove single edges and small subgraphs
