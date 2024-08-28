@@ -86,7 +86,7 @@ def graph_from_gdf(nodes, edges, node_id='node_id', node_geo='geometry', edge_id
     edge_graph['osmid'] = edge_graph[edge_id]
     edge_graph.set_index([edge_from, edge_to, edge_id], inplace=True)
 
-    return ox.utils_graph.graph_from_gdfs(node_graph, edge_graph)
+    return ox.convert.graph_from_gdfs(node_graph, edge_graph)
 
 
 def subordinate_road_length(taz_sub, sub_type="secondary"):
@@ -105,7 +105,7 @@ def subordinate_road_length(taz_sub, sub_type="secondary"):
     for i, t in tqdm(taz_sub.iterrows()):
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
-            sub_edges = ox.geometries.geometries_from_polygon(t['geometry'], tags={"highway": sub_type})
+            sub_edges = ox.features.features_from_polygon(t['geometry'], tags={"highway": sub_type})
         # remove geometries other than line
         if len(sub_edges.geom_type.unique()) > 1:
             sub_edges = sub_edges[sub_edges.geom_type.isin(["MultiLineString", "LineString"])].copy()
@@ -234,10 +234,10 @@ class Edges:
                             sur_df = pd.concat([sur_df, _surface])
                             del _surface
                         # merge surface to edges in G on osmid
-                        n, e = ox.utils_graph.graph_to_gdfs(G)
+                        n, e = ox.convert.graph_to_gdfs(G)
                         e = e.reset_index().merge(sur_df, on='osmid', how='left').set_index(['u', 'v', 'key'])
                         # transform back to Graph
-                        G = ox.utils_graph.graph_from_gdfs(n, e)
+                        G = ox.convert.graph_from_gdfs(n, e)
                         del n, e
                     G = ox.simplify_graph(G)
                     G = ox.simplification.consolidate_intersections(G, tolerance=0.002)
@@ -344,7 +344,7 @@ class Edges:
 
         # get undirected graph
         _graph = graph_from_gdf(nodes, edges, node_id=node_id, node_geo=node_geo, edge_id=edge_id, edge_from=edge_from, edge_to=edge_to)
-        _graph_u = ox.utils_graph.get_undirected(_graph)
+        _graph_u = ox.convert.to_undirected(_graph)
 
         # get subgraphs
         SG = [[_graph_u.subgraph(c).copy(), len(c)] for c in sorted(nx.connected_components(_graph_u), key=len, reverse=False)]
@@ -750,7 +750,7 @@ class Ferries:
             water = hull.difference(self.region[self.taz_geo].buffer(buffer_water).unary_union)
             # get ferry routes and bridges with roads for water body
             print(". . . extracting bridges and ferries from OSM")
-            self.ferry = ox.geometries.geometries_from_polygon(water, tags={"route": "ferry", "highway": ["motorway", "trunk"]})
+            self.ferry = ox.features.features_from_polygon(water, tags={"route": "ferry", "highway": ["motorway", "trunk"]})
             print(". . . bridges and ferries extracted!")
             # remove non-LineString geometries
             if len(self.ferry.geom_type.unique()) > 1:
