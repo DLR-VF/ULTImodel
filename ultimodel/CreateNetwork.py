@@ -100,11 +100,12 @@ def subordinate_road_length(taz_sub, sub_type="secondary"):
     :type sub_type: str
     :rtype: gpd.GeoDataFrame
     """
-    taz_sub['length_sub'] = 0
+    taz_sub['length_sub'] = 0.0
     # iterate over TAZ
     for i, t in tqdm(taz_sub.iterrows()):
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
+            warnings.filterwarnings("ignore", category=UserWarning, append=True)
             sub_edges = ox.features.features_from_polygon(t['geometry'], tags={"highway": sub_type})
         # remove geometries other than line
         if len(sub_edges.geom_type.unique()) > 1:
@@ -241,7 +242,7 @@ class Edges:
                         del n, e
                     G = ox.simplify_graph(G)
                     G = ox.simplification.consolidate_intersections(G, tolerance=0.002)
-                G = ox.speed.add_edge_speeds(G, fallback=50, precision=0)
+                G = ox.routing.add_edge_speeds(G, fallback=50)
                 if self.surface:
                     edges = gpd.GeoDataFrame([x[2] for x in G.edges.data()])[["highway", "speed_kph", "surface", "geometry"]]
                 else:
