@@ -21,7 +21,6 @@ from shapely.geometry import Point, LineString
 from sklearn.cluster import KMeans
 from tqdm import tqdm
 import requests
-import json
 
 
 def ckdnearest(gdA, gdB, bcolA, bcolB, n):
@@ -260,24 +259,37 @@ class Edges:
 
         return n_poly
 
-    def set_attributes(self, taz_id, start_id=0):
+    def set_attributes(self, taz_id, start_id=0, keep_na=True, inside_country=False, max_len_foreign=0.):
         """
         Overlay self.edges with TAZ layer to split links at borders and assign TAZ-ID
         Set length, travel time, highway type and ID of self.edges GeoDataFrame
 
         :param taz_id: Name of ID-column in TAZ layer
         :param start_id: start of IDs for each edge, default 0
+        :param keep_na: If True, roads that have NA as result of TAZ overlay will be kept in the graph, default True
+        :param inside_country: if True, remove roads that were etracted, but are not within the country, default False
+        :param max_len_foreign: Maximmum length of roads on foreign territory to keep if inside_country=True
         :return: self.edges is updated with necessary attributes
         :type taz_id: str
         :type start_id: int
+        :type keep_na: bool
+        :type max_len_foreign: float
+        :type inside_country: bool
         """
 
         self.edges = gpd.overlay(self.edges, self.taz[[taz_id, self.taz_geo]], how='union', keep_geom_type=True)
         self.edges = self.edges.explode(index_parts=True)
+        if keep_na:
+            # set NA to 0; NA are usually created for bridges over larger bodies of water or depend on the accuracy of the TAZ borders; are to be kept
+            self.edges.loc[self.edges[taz_id].isna(), taz_id] = 0
         # calculate length in km
         self.edges = self.edges.to_crs(epsg=3035)
         self.edges["length"] = self.edges.length / 1000
         self.edges = self.edges.to_crs(epsg=4326)
+        # remove roads with other country's TAZ ID
+        if inside_country:
+            taz_cn = self.taz[self.taz[self.taz_cn] == self.country].copy()
+            self.edges = self.edges[(self.edges[taz_id].isin(taz_cn[taz_id])) | (self.edges[taz_id]==0) | (self.edges['length'] < max_len_foreign)].copy()
         # calculate travel time in s
         self.edges["tt"] = np.round((self.edges["length"] / self.edges["speed_kph"])*(60**2))
         # set ID, type as numeric
